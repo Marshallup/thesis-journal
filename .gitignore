@@ -1,0 +1,87 @@
+# Зависимости
+node_modules/
+.pnpm-store/
+
+# pnpm-lock.yaml НЕ игнорируем: лок-файл коммитим, иначе CI и локальная машина
+# соберут разные версии, и «у меня работает» станет нормой
+
+# Сборка
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Кэши инструментов
+.turbo/
+.cache/
+.vite/
+.eslintcache
+.stylelintcache
+vite.config.*.timestamp-*
+
+# Тесты и отчёты
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+*.lcov
+
+# Окружение и секреты
+.env
+.env.*
+!.env.example
+!.env.test.example
+env.local
+*.pem
+*.key
+*.p12
+master.key
+secrets/
+
+# Prisma: сгенерированный клиент игнорируем, миграции — нет.
+# Миграции это код, они должны воспроизводиться на любой машине и в CI
+packages/db/generated/
+packages/db/prisma/*.db
+
+# Данные локальной инфраструктуры (тома docker-compose, если смонтированы в проект)
+.docker-data/
+pgdata/
+clickhouse-data/
+rabbitmq-data/
+kafka-data/
+
+# Логи
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Настоящие брокерские отчёты и выгрузки: в репозиторий попадать не должны никогда.
+# В тестах лежат только обезличенные фикстуры с выдуманными суммами
+*.real.xlsx
+*.real.csv
+*.real.pdf
+private/
+uploads/
+
+# Операционные системы
+.DS_Store
+.AppleDouble
+Thumbs.db
+desktop.ini
+
+# Редакторы
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+
+# Локальные настройки ассистентов (CLAUDE.md — общий, коммитим; локальное — нет)
+.claude/settings.local.json
+CLAUDE.local.md
