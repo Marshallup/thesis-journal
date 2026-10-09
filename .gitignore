@@ -85,3 +85,8 @@ desktop.ini
 # Локальные настройки ассистентов (CLAUDE.md — общий, коммитим; локальное — нет)
 .claude/settings.local.json
 CLAUDE.local.md
+
+# mise: mise.toml коммитим, машинные переопределения — нет
+mise.local.toml
+.mise.local.toml
+mise.*.local.toml

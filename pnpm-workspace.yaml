@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Версии пишем точно, без "^": подъём зависимости должен быть виден
+# в диффе package.json, а не прятаться в лок-файле.
+saveExact: true
+minimumReleaseAgeExclude:
+  - '@vitest/mocker@5.0.2'
+  - '@vitest/spy@5.0.2'
+  - vitest@5.0.2
