@@ -1,0 +1,46 @@
+# Локальная инфраструктура недель 1–3: PostgreSQL как единственное хранилище
+# и Redis. rabbitmq, kafka и clickhouse появятся здесь с недели 4, когда
+# ingestor, core и notifier станут отдельными процессами.
+
+# Имя проекта фиксируем: по умолчанию compose берёт его из имени каталога,
+# а каталогов у репозитория несколько (git worktree). Без этого каждая ветка
+# поднимала бы свой постгрес со своим томом и дралась за порт 5432.
+name: thesis
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: thesis
+      # Пароль задан явно, без интерполяции ${...}: переменные для подстановки
+      # compose берёт только из env-файла с именем по умолчанию, а рабочий
+      # у нас называется иначе (README, «Быстрый старт»). Переопределение
+      # оттуда молча не применилось бы, и строка подключения разошлась бы
+      # с паролем базы. Это локальная разработка, секрета здесь нет;
+      # у прода свой compose-файл и свои переменные.
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: thesis
+    ports: ['5432:5432']
+    # Монтируем /var/lib/postgresql, а не .../data: с 18-й версии образ
+    # держит данные в подкаталоге с номером мажорной версии
+    # (/var/lib/postgresql/18/docker), чтобы потом работал pg_upgrade --link
+    # без пересечения точек монтирования. При старом пути образ видит
+    # «неапгрейженную базу» и отказывается стартовать.
+    volumes: ['pgdata:/var/lib/postgresql']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U thesis -d thesis']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    ports: ['6379:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
