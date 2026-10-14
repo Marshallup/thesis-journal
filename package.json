@@ -8,15 +8,22 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
+    "test:int": "vitest run --config vitest.int.config.ts",
     "lint": "oxlint",
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "12.2.1",
+    "@thesis/db": "workspace:*",
+    "dotenv": "18.0.8",
     "oxfmt": "0.71.0",
     "oxlint": "1.85.0",
+    "prisma": "7.10.0",
     "typescript": "7.0.2",
     "vitest": "5.0.2"
   }
