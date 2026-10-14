@@ -9,3 +9,12 @@ minimumReleaseAgeExclude:
   - '@vitest/mocker@5.0.2'
   - '@vitest/spy@5.0.2'
   - vitest@5.0.2
+  - dotenv@18.0.8
+# Разрешаем build только prisma: её postinstall раскладывает query engine.
+# Остальные — нативные ускорители для Docker поверх SSH, нам не нужны.
+allowBuilds:
+  '@prisma/engines': true
+  prisma: true
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

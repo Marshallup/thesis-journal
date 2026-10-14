@@ -1,0 +1,19 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  // uuidv7() — встроенная функция PostgreSQL 18, расширений не требует.
+  id           String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  // Регистр нормализуется в коде: в БД сравнение чувствительно к нему.
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("users")
+}
