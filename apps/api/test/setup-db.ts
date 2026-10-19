@@ -5,7 +5,15 @@ import { PrismaClient, PrismaPg } from '@thesis/db'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
 
-export async function withTestDb() {
+// Тип выписан явно: выведенный ссылается на внутренние файлы генерата Prisma,
+// и TypeScript справедливо считает такой тип непортабельным (TS2883).
+export type TestDb = {
+  prisma: PrismaClient
+  url: string
+  stop: () => Promise<void>
+}
+
+export async function withTestDb(): Promise<TestDb> {
   const container = await new PostgreSqlContainer('postgres:18-alpine').start()
   const url = container.getConnectionUri()
 

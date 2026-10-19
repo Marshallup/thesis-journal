@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Nest держит DI на legacy-декораторах и читает типы параметров
+    // конструктора из метаданных — без этих двух флагов инъекция не работает.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
