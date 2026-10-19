@@ -30,14 +30,15 @@ it('отвечает ok, когда база доступна', async () => {
   const res = await request(app.getHttpServer()).get('/health')
 
   expect(res.status).toBe(200)
-  expect(res.body).toEqual({ status: 'ok', db: 'up' })
+  expect(res.body).toMatchObject({ status: 'ok', details: { database: { status: 'up' } } })
 })
 
 it('отвечает 503, когда база недоступна', async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(PrismaService)
     .useValue({
-      $queryRaw: () => Promise.reject(new Error('connection refused')),
+      // Именно этот метод зовёт PrismaHealthIndicator для SQL-клиента.
+      $queryRawUnsafe: () => Promise.reject(new Error('connection refused')),
       $connect: () => Promise.resolve(),
       $disconnect: () => Promise.resolve(),
     })
@@ -48,7 +49,7 @@ it('отвечает 503, когда база недоступна', async () =>
   const res = await request(broken.getHttpServer()).get('/health')
 
   expect(res.status).toBe(503)
-  expect(res.body).toEqual({ status: 'error', db: 'down' })
+  expect(res.body).toMatchObject({ status: 'error', details: { database: { status: 'down' } } })
 
   await broken.close()
 })
