@@ -10,6 +10,7 @@
     "build": "pnpm -r --if-present build",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "dev": "pnpm -r --parallel --if-present dev",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
@@ -18,8 +19,6 @@
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "12.2.1",
-    "@thesis/db": "workspace:*",
     "dotenv": "18.0.8",
     "oxfmt": "0.71.0",
     "oxlint": "1.85.0",

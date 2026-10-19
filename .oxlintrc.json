@@ -3,5 +3,13 @@
     "correctness": "error",
     "suspicious": "error"
   },
-  "ignorePatterns": ["**/dist/**", "**/generated/**"]
+  "ignorePatterns": ["**/dist/**", "**/generated/**"],
+  "rules": {
+    "typescript/no-extraneous-class": [
+      "error",
+      {
+        "allowWithDecorator": true
+      }
+    ]
+  }
 }

@@ -84,3 +84,40 @@ Active LTS 28.10.2026. То есть большую часть проекта м
 
 **Вернуться когда:** если `contracts` когда-нибудь будем публиковать в реестр. Чужой тулинг
 (не tsc) может на `.ts` в декларациях споткнуться. Пока пакет приватный — вопроса нет.
+
+
+---
+
+## Nest CLI и TypeScript 7
+
+**Дата:** 19.10.2026 · **Решено:** остаёмся на TS 7, CLI в зависимостях не держим
+
+Каркас `apps/api` развёрнут официальным `nest new` (CLI 12.0.8), но сам CLI на нашем пине
+не работает — ни сборка, ни схематики:
+
+```
+$ nest build
+Error: The installed TypeScript version (7.0.2) does not expose the programmatic
+compiler API that the Nest CLI requires. TypeScript 7.0 ships the "tsc"
+executable only; the compiler API is expected to return in 7.1.
+
+$ nest g co probe --dry-run
+Error: The requested module 'typescript' does not provide an export named 'SyntaxKind'
+```
+
+`nest new` отработал только потому, что `pnpm dlx` поставил себе собственный TypeScript 6
+в стороне от репозитория. Из того же корня растёт peer-предупреждение `@nestjs/swagger`:
+он просит `^5.5 || ^6`.
+
+Выбрали остаться на TypeScript 7. Цена: нет `nest build`, нет `nest start --watch`, нет
+`nest g`. Сборка — `tsc -p tsconfig.build.json`, dev-петля без горячей перезагрузки.
+Альтернатива — откат на TS 6, предусмотренный таблицей стека в плане недель 1–3, но это
+смена компилятора во всех трёх пакетах ради watch-режима в одном.
+
+Генератор при этом остаётся полезен как эталон: разово через `pnpm dlx @nestjs/cli` он
+приносит свой TypeScript и показывает актуальную раскладку.
+
+**Вернуться когда:** выйдет TypeScript 7.1 с программным API компилятора. Тогда проверить
+`nest build` и `nest g`, и если работают — вернуть `@nestjs/cli` с `@nestjs/schematics`
+в devDependencies `apps/api`, а `build` и `dev` перевести на `nest build` и
+`nest start --watch` (у `nest start` есть собственный флаг `--env-file`).

@@ -10,6 +10,10 @@ minimumReleaseAgeExclude:
   - '@vitest/spy@5.0.2'
   - vitest@5.0.2
   - dotenv@18.0.8
+  - '@nestjs/common@12.2.0'
+  - '@nestjs/core@12.2.0'
+  - '@nestjs/platform-express@12.2.0'
+  - '@nestjs/testing@12.2.0'
 # Разрешаем build только prisma: её postinstall раскладывает query engine.
 # Остальные — нативные ускорители для Docker поверх SSH, нам не нужны.
 allowBuilds:
@@ -18,3 +22,5 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+  # @scarf/scarf — телеметрия, приезжает через swagger-ui-dist.
+  '@scarf/scarf': false

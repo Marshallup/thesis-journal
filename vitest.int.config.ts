@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config'
 // чтобы `pnpm test` не поднимал контейнеры.
 export default defineConfig({
   test: {
-    include: ['{apps,packages}/*/test/**/*.int.test.ts'],
+    include: ['{apps,packages}/*/test/**/*.{int,e2e}.test.ts'],
     // Образ тянется и ждёт healthcheck — дефолтных 5 секунд не хватает.
     hookTimeout: 120_000,
     testTimeout: 60_000,
