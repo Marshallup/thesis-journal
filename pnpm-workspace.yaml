@@ -22,7 +22,5 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
-  # @swc/core: нативный бинарь приходит опциональной зависимостью, postinstall
-  # только сверяет привязку и шлёт телеметрию через @scarf/scarf.
-  '@swc/core': false
+  # @scarf/scarf — телеметрия, приезжает через swagger-ui-dist.
   '@scarf/scarf': false
