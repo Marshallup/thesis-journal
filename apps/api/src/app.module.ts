@@ -22,8 +22,26 @@ import { HealthModule } from './health/health.module.ts'
       ignoreEnvFile: process.env.NODE_ENV === 'test',
     }),
     LoggerModule.forRoot({
-      // В тестах логи только мешают выводу прогона.
-      pinoHttp: { level: process.env.NODE_ENV === 'test' ? 'silent' : 'info' },
+      pinoHttp: {
+        // В тестах логи только мешают выводу прогона.
+        level: process.env.NODE_ENV === 'test' ? 'silent' : 'info',
+        // В разработке логи читает человек, в проде их разбирают машины —
+        // поэтому pino-pretty только здесь, а на проде остаётся JSON. Spread,
+        // а не transport: undefined — при exactOptionalPropertyTypes это разное.
+        ...(process.env.NODE_ENV === 'development'
+          ? {
+              transport: {
+                target: 'pino-pretty',
+                options: { singleLine: true, translateTime: 'HH:MM:ss' },
+              },
+            }
+          : {}),
+        // pino-http пишет заголовки целиком, а там токен и refresh-cookie.
+        redact: {
+          paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+          censor: '[redacted]',
+        },
+      },
     }),
     AuthModule,
     HealthModule,
