@@ -43,7 +43,7 @@ docs/         дизайн, планы, ADR, конспекты
 
 ```bash
 pnpm install
-cp env.example .env.local        # заполнить секреты
+cp env.example .env              # заполнить секреты
 docker compose up -d             # postgres, redis, rabbitmq, kafka, clickhouse
 pnpm db:migrate
 pnpm dev                         # api на :3000, web на :5173
