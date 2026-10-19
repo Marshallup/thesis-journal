@@ -9,9 +9,11 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import { AuthGuard } from '@nestjs/passport'
 import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger'
 import type { Request, Response } from 'express'
+import type { Env } from '../config/env.ts'
 import { AuthService } from './auth.service.ts'
 import type { Session } from './auth.service.ts'
 import { CurrentUser } from './current-user.decorator.ts'
@@ -33,20 +35,25 @@ function readRefreshToken(request: Request): string {
   return raw
 }
 
-function setRefreshCookie(response: Response, session: Session): void {
-  response.cookie(COOKIE, session.refreshToken, {
-    httpOnly: true,
-    sameSite: 'strict',
-    // Через http cookie с secure не доедет, а тесты и разработка идут по http.
-    secure: process.env.NODE_ENV === 'production',
-    path: '/auth',
-    expires: session.refreshExpiresAt,
-  })
-}
-
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
+
+  private setRefreshCookie(response: Response, session: Session): void {
+    response.cookie(COOKIE, session.refreshToken, {
+      httpOnly: true,
+      sameSite: 'strict',
+      // Через http cookie с secure не доедет, а разработка идёт по http.
+      secure: this.config.get('NODE_ENV', { infer: true }) === 'production',
+      // Только там, где её потребляют: долгоживущий секрет не должен
+      // ездить по сети лишний раз.
+      path: '/auth/refresh',
+      expires: session.refreshExpiresAt,
+    })
+  }
 
   @Post('register')
   @ApiOperation({ summary: 'Регистрация' })
@@ -64,7 +71,7 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const session = await this.auth.login(body)
-    setRefreshCookie(response, session)
+    this.setRefreshCookie(response, session)
     return { accessToken: session.accessToken }
   }
 
@@ -82,7 +89,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Ротация: старый refresh списывается, выдаётся новый' })
   async refresh(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const session = await this.auth.rotate(readRefreshToken(request))
-    setRefreshCookie(response, session)
+    this.setRefreshCookie(response, session)
     return { accessToken: session.accessToken }
   }
 }
