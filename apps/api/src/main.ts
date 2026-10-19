@@ -1,5 +1,6 @@
 // Должен стоять первым: Nest читает метаданные декораторов через reflect-metadata.
 import 'reflect-metadata'
+import { Logger as NestLogger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
@@ -19,10 +20,18 @@ async function bootstrap() {
     .setTitle('Thesis API')
     .setDescription('Дневник инвестиционных решений')
     .setVersion('0.1.0')
+    // Без этого в /docs нет кнопки Authorize и защищённые маршруты не потыкать.
+    .addBearerAuth()
     .build()
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, config))
 
-  await app.listen(app.get(ConfigService<Env, true>).get('PORT', { infer: true }))
+  const port = app.get(ConfigService<Env, true>).get('PORT', { infer: true })
+  await app.listen(port)
+
+  // Сам Nest адрес не печатает, а он нужен каждый запуск.
+  const log = new NestLogger('Bootstrap')
+  log.log(`api http://localhost:${port}`)
+  log.log(`docs http://localhost:${port}/docs`)
 }
 
 void bootstrap()

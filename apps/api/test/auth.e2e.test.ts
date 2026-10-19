@@ -34,7 +34,7 @@ async function registerAndLogin(email: string) {
   const login = await agent.post('/auth/login').send({ email, password: PASSWORD })
   expect(login.status).toBe(200)
 
-  return { agent, login }
+  return { agent, registered, login }
 }
 
 beforeAll(async () => {
@@ -90,4 +90,28 @@ it('считает email без учёта регистра при регист�
     .post('/auth/register')
     .send({ email: 'CASE@EXAMPLE.COM', password: PASSWORD })
   expect(second.status).toBe(409)
+})
+
+it('отдаёт текущего пользователя по access-токену', async () => {
+  const { registered, login } = await registerAndLogin('me@example.com')
+  const { id } = registered.body as { id: string }
+  const { accessToken } = login.body as { accessToken: string }
+
+  const ok = await request(app.getHttpServer())
+    .get('/auth/me')
+    .set('Authorization', `Bearer ${accessToken}`)
+  expect(ok.status).toBe(200)
+  expect(ok.body).toEqual({ userId: id })
+
+  const anonymous = await request(app.getHttpServer()).get('/auth/me')
+  expect(anonymous.status).toBe(401)
+
+  // Подделанная подпись: меняем последний символ.
+  const tampered = await request(app.getHttpServer())
+    .get('/auth/me')
+    .set(
+      'Authorization',
+      `Bearer ${accessToken.slice(0, -1)}${accessToken.endsWith('a') ? 'b' : 'a'}`,
+    )
+  expect(tampered.status).toBe(401)
 })
