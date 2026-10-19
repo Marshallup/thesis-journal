@@ -8,3 +8,9 @@ export const credentialsSchema = z.object({
 })
 
 export type Credentials = z.infer<typeof credentialsSchema>
+
+// Та же схема для OpenAPI: @nestjs/swagger Zod сам не видит, а описывать тело
+// второй раз руками — верный способ его рассинхронизировать.
+export const credentialsOpenApiSchema = z.toJSONSchema(credentialsSchema, {
+  target: 'openapi-3.0',
+})
