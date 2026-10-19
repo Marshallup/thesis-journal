@@ -3,9 +3,12 @@
   "compilerOptions": {
     "noEmit": true,
     // Nest держит DI на legacy-декораторах и читает типы параметров
-    // конструктора из метаданных — без этих двух флагов инъекция не работает.
+    // конструктора из метаданных. strictPropertyInitialization выключен так же,
+    // как в скаффолде nest new: поля заполняет контейнер, а не конструктор.
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false,
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

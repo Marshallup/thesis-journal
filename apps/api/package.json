@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json && node --env-file-if-exists=../../.env dist/main.js",
-    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -24,6 +24,9 @@
   },
   "devDependencies": {
     "@nestjs/testing": "12.2.0",
+    "@testcontainers/postgresql": "12.2.1",
+    "@types/express": "5.0.6",
+    "@types/node": "24.19.2",
     "@types/supertest": "7.2.1",
     "supertest": "7.3.1"
   }
