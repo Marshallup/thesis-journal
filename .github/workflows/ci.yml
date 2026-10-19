@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # prisma generate к базе не подключается, но общий prisma.config.ts
+      # разрешает env('DATABASE_URL') жадно и без неё падает. Адрес-заглушка:
+      # интеграционные тесты получают свой от Testcontainers.
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # Версии node и pnpm — из mise.toml, один источник пинов. Теги точные:
+      # мажор переезжает молча, а подъём версии должен быть виден в диффе.
+      - uses: jdx/mise-action@v5.2.1
+      - run: pnpm install --frozen-lockfile
+      # Клиент Prisma в .gitignore: без генерации не проходит даже typecheck.
+      - run: pnpm db:generate
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm test
+      # Отдельным шагом: `pnpm test` смотрит только в src/**, интеграционные
+      # лежат в test/** и поднимают контейнеры.
+      - run: pnpm test:int
