@@ -1,0 +1,34 @@
+# Недели 1–3: только postgres и redis. rabbitmq, kafka, clickhouse — с недели 4.
+
+# Фиксируем имя: иначе каждый worktree поднимет свой стек на тех же портах.
+name: thesis
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: thesis
+      # Явно, без ${...}: пароль всё равно продублирован внутри DATABASE_URL.
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: thesis
+    ports: ['5432:5432']
+    # С 18-й версии монтируется /var/lib/postgresql, не .../data:
+    # данные лежат в подкаталоге по номеру версии, иначе образ не стартует.
+    volumes: ['pgdata:/var/lib/postgresql']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U thesis -d thesis']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    ports: ['6379:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
