@@ -94,6 +94,7 @@ model Trade {
 
   lots         Lot[]
   consumptions LotConsumption[]
+  decisions    DecisionTrade[]
 
   @@unique([accountId, provider, externalId], name: "trade_idempotency", map: "trade_idempotency")
   @@index([accountId, executedAt])
@@ -159,4 +160,74 @@ model Position {
 
   @@unique([accountId, instrumentId])
   @@map("positions")
+}
+
+// Почему, а не только что. Ядро решения неизменяемо: правка создаёт ревизию,
+// запрет стоит триггером в базе, а не в сервисе — сервисов будет четыре.
+model Decision {
+  id           String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  // accountId и instrumentId в списке полей плана отсутствовали, но их требует
+  // matchDecisionToTrades из задачи 11. accountId заодно даёт путь к владельцу
+  // для политики RLS: своей колонки пользователя у решения нет.
+  accountId    String @map("account_id") @db.Uuid
+  instrumentId String @map("instrument_id") @db.Uuid
+  side         String
+
+  thesis          String
+  horizonDays     Int      @map("horizon_days")
+  conviction      Int
+  mood            String
+  invalidator     String?
+  tags            String[]
+  freeText        String?  @map("free_text")
+  // jsonb намеренно: ключ news добавится в v2 без миграции. Снимок делает
+  // задача 13, здесь колонка только появляется.
+  contextSnapshot Json?    @map("context_snapshot") @db.JsonB
+
+  // Решение задним числом (задача 18) исключается из поведенческих срезов.
+  postFactum Boolean  @default(false) @map("post_factum")
+  // Горизонт истёк без сделок — учёт несовершённых сделок, пишет задача 11.
+  unrealized Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  revisions DecisionRevision[]
+  trades    DecisionTrade[]
+
+  @@index([accountId, instrumentId, createdAt])
+  @@map("decisions")
+}
+
+// Полный снимок изменяемых полей. Append-only: правок у правок не бывает.
+model DecisionRevision {
+  id         String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId  String   @map("account_id") @db.Uuid
+  decisionId String   @map("decision_id") @db.Uuid
+  decision   Decision @relation(fields: [decisionId], references: [id], onDelete: Restrict)
+
+  thesis      String
+  horizonDays Int      @map("horizon_days")
+  conviction  Int
+  mood        String
+  invalidator String?
+  tags        String[]
+  freeText    String?  @map("free_text")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([decisionId, createdAt])
+  @@map("decision_revisions")
+}
+
+// Связь решения со сделками. Заполняет задача 11.
+model DecisionTrade {
+  id         String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId  String   @map("account_id") @db.Uuid
+  decisionId String   @map("decision_id") @db.Uuid
+  decision   Decision @relation(fields: [decisionId], references: [id], onDelete: Restrict)
+  tradeId    String   @map("trade_id") @db.Uuid
+  trade      Trade    @relation(fields: [tradeId], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([decisionId, tradeId], name: "decision_trade_link", map: "decision_trade_link")
+  @@index([tradeId])
+  @@map("decision_trades")
 }
