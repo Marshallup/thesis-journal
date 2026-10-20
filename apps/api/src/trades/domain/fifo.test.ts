@@ -7,8 +7,8 @@ import { consumeFifo } from './fifo.ts'
 
 it('списывает старый лот первым и считает прибыль по нему', () => {
   const lots = [
-    { id: 'l1', qty: Money.of('1'), price: Money.of('100'), openedAt: new Date('2026-01-01') },
-    { id: 'l2', qty: Money.of('1'), price: Money.of('200'), openedAt: new Date('2026-02-01') },
+    { id: 'l1', qty: Money.of('1'), cost: Money.of('100'), openedAt: new Date('2026-01-01') },
+    { id: 'l2', qty: Money.of('1'), cost: Money.of('200'), openedAt: new Date('2026-02-01') },
   ]
 
   const res = consumeFifo(lots, Money.of('1'), Money.of('300'), Money.of('0'))
@@ -16,32 +16,32 @@ it('списывает старый лот первым и считает при
   expect(res.consumptions).toHaveLength(1)
   expect(res.consumptions[0]?.lotId).toBe('l1')
   expect(res.consumptions[0]?.qty.toString()).toBe('1')
+  expect(res.consumptions[0]?.cost.toString()).toBe('100')
   expect(res.consumptions[0]?.realizedPnl.toString()).toBe('200')
   expect(res.remainingLots).toHaveLength(1)
   expect(res.remainingLots[0]?.id).toBe('l2')
 })
 
-it('разносит частичную продажу по двум лотам и вычитает комиссию', () => {
+it('разносит частичную продажу по двум лотам и делит комиссию пропорционально', () => {
   const lots = [
-    { id: 'l1', qty: Money.of('1'), price: Money.of('100'), openedAt: new Date('2026-01-01') },
-    { id: 'l2', qty: Money.of('2'), price: Money.of('150'), openedAt: new Date('2026-02-01') },
+    { id: 'l1', qty: Money.of('1'), cost: Money.of('100'), openedAt: new Date('2026-01-01') },
+    { id: 'l2', qty: Money.of('2'), cost: Money.of('300'), openedAt: new Date('2026-02-01') },
   ]
 
   const res = consumeFifo(lots, Money.of('2'), Money.of('200'), Money.of('10'))
 
   expect(res.consumptions.map((c) => c.lotId)).toEqual(['l1', 'l2'])
   expect(res.consumptions.map((c) => c.qty.toString())).toEqual(['1', '1'])
+  // l1 закрывается — забирает весь свой остаток затрат; l2 отдаёт половину.
+  expect(res.consumptions.map((c) => c.cost.toString())).toEqual(['100', '150'])
+  // комиссия 10 на две равные порции — по 5 в каждую
+  expect(res.consumptions.map((c) => c.realizedPnl.toString())).toEqual(['95', '45'])
   expect(res.remainingLots[0]?.qty.toString()).toBe('1')
-
-  // Проверяется сумма, а не слагаемые: разнос комиссии по консумациям —
-  // пропорционально или целиком в первую — остаётся решением реализации.
-  // (200-100)*1 + (200-150)*1 - 10 комиссии
-  const total = res.consumptions.reduce((acc, c) => acc.plus(c.realizedPnl), Money.of('0'))
-  expect(total.toString()).toBe('140')
+  expect(res.remainingLots[0]?.cost.toString()).toBe('150')
 })
 
 it('отказывается продать больше, чем есть', () => {
-  const lots = [{ id: 'l1', qty: Money.of('1'), price: Money.of('100'), openedAt: new Date() }]
+  const lots = [{ id: 'l1', qty: Money.of('1'), cost: Money.of('100'), openedAt: new Date() }]
 
   expect(() => consumeFifo(lots, Money.of('2'), Money.of('200'), Money.of('0'))).toThrow(
     'not enough quantity',
@@ -55,13 +55,13 @@ it('при одинаковом openedAt даёт один результат н
   const cheaper = {
     id: 'l1',
     qty: Money.of('1'),
-    price: Money.of('100'),
+    cost: Money.of('100'),
     openedAt: new Date('2026-01-01'),
   }
   const pricier = {
     id: 'l2',
     qty: Money.of('1'),
-    price: Money.of('200'),
+    cost: Money.of('200'),
     openedAt: new Date('2026-01-01'),
   }
 
@@ -73,4 +73,28 @@ it('при одинаковом openedAt даёт один результат н
     expect(res.consumptions[0]?.realizedPnl.toString()).toBe('200')
     expect(res.remainingLots[0]?.id).toBe('l2')
   }
+})
+
+// Затраты 310 на три штуки не делятся нацело. Продаём по одной: первые две
+// получают округлённую долю, последняя забирает остаток — и сумма сходится
+// точно. Именно это и есть причина не делить комиссию «на глазок».
+it('распродажа лота по частям относит затраты без потери копеек', () => {
+  let lots = [
+    { id: 'l1', qty: Money.of('3'), cost: Money.of('310'), openedAt: new Date('2026-01-01') },
+  ]
+  const costs: string[] = []
+  const pnls: string[] = []
+
+  for (let i = 0; i < 3; i++) {
+    const res = consumeFifo(lots, Money.of('1'), Money.of('150'), Money.of('0'))
+    costs.push(res.consumptions[0]?.cost.toString() ?? '')
+    pnls.push(res.consumptions[0]?.realizedPnl.toString() ?? '')
+    lots = res.remainingLots
+  }
+
+  expect(lots).toHaveLength(0)
+  const totalCost = costs.reduce((acc, c) => acc.plus(c), Money.of('0'))
+  const totalPnl = pnls.reduce((acc, p) => acc.plus(p), Money.of('0'))
+  expect(totalCost.toString()).toBe('310')
+  expect(totalPnl.toString()).toBe('140') // 3 * 150 - 310
 })

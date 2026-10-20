@@ -29,6 +29,14 @@ export class Money {
   times(x: string | Money): Money {
     return new Money(this.#value.times(Money.of(x).#value))
   }
+  // Единственная операция, результат которой может не поместиться: 10/3
+  // бесконечно. Масштаб задаётся явно, по умолчанию 8 знаков — как numeric(28,8)
+  // в базе. Округление банковское: HALF_UP систематически завышает.
+  div(x: string | Money, scale = 8): Money {
+    const divisor = Money.of(x).#value
+    if (divisor.isZero()) throw new RangeError('division by zero')
+    return new Money(this.#value.div(divisor).toDecimalPlaces(scale, D.ROUND_HALF_EVEN))
+  }
   eq(x: string | Money): boolean {
     return this.#value.eq(Money.of(x).#value)
   }
