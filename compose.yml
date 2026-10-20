@@ -11,10 +11,18 @@ services:
       # Явно, без ${...}: пароль всё равно продублирован внутри DATABASE_URL.
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: thesis
+      # Роль приложения: под ней работает сервис и действует RLS. Литералом,
+      # по той же причине, что и пароль выше.
+      APP_DB_ROLE: thesis_app
+      APP_DB_PASSWORD: devpassword
     ports: ['5432:5432']
     # С 18-й версии монтируется /var/lib/postgresql, не .../data:
     # данные лежат в подкаталоге по номеру версии, иначе образ не стартует.
-    volumes: ['pgdata:/var/lib/postgresql']
+    volumes:
+      - 'pgdata:/var/lib/postgresql'
+      # Роль приложения без BYPASSRLS. Скрипты из initdb.d выполняются только
+      # при первой инициализации тома: существующему нужен down -v.
+      - './docker/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/init-app-role.sh:ro'
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U thesis -d thesis']
       interval: 5s
