@@ -37,6 +37,22 @@ describe('Money', () => {
     expect(Money.of('-0.000000000000000001').isNegative()).toBe(true)
   })
 
+  it('делит с явным масштабом', () => {
+    expect(Money.of('10').div('3').toString()).toBe('3.33333333')
+    expect(Money.of('10').div('3', 2).toString()).toBe('3.33')
+    expect(Money.of('10').div('4').toString()).toBe('2.5')
+  })
+
+  it('округляет к чётному, а не вверх', () => {
+    // HALF_UP дал бы 0.00000001 и 0.00000002 — смещение вверх на каждой копейке
+    expect(Money.of('0.000000005').div('1').toString()).toBe('0')
+    expect(Money.of('0.000000015').div('1').toString()).toBe('0.00000002')
+  })
+
+  it('отказывается делить на ноль, а не отдаёт Infinity', () => {
+    expect(() => Money.of('1').div('0')).toThrow('division by zero')
+  })
+
   it('принимает Money и не меняет значение', () => {
     expect(Money.of(Money.of('5')).toString()).toBe('5')
     expect(Money.of('2').plus(Money.of('3')).toString()).toBe('5')
