@@ -56,6 +56,9 @@ importers:
       '@node-rs/argon2':
         specifier: 2.2.2
         version: 2.2.2
+      '@thesis/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@thesis/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -108,6 +111,9 @@ importers:
       '@types/supertest':
         specifier: 7.2.1
         version: 7.2.1
+      fast-check:
+        specifier: 4.10.2
+        version: 4.10.2
       pino-pretty:
         specifier: 13.2.0
         version: 13.2.0
@@ -1784,6 +1790,10 @@ packages:
     resolution: {integrity: sha512-h5+1OzzfCC3Ef7VbtKdcv7zsstUQwUDlYpUTvjeUsJAssPgLn7QzbboPtL5ro04Mq0rPOsMzl7q5hIbRs2wD1A==}
     engines: {node: '>=8.0.0'}
 
+  fast-check@4.10.2:
+    resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
+    engines: {node: '>=12.17.0'}
+
   fast-copy@4.2.0:
     resolution: {integrity: sha512-WSlnvPXaMdUjFdgxPkovE4e5aslybVod4TNKrEKKyoA8GoHZzbDLlhDXZOvqjtFgjtOHd9TYCstkUcGXy1+SEA==}
 
@@ -2439,6 +2449,9 @@ packages:
 
   pure-rand@6.1.0:
     resolution: {integrity: sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA==}
+
+  pure-rand@8.4.2:
+    resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
 
   qs@6.16.1:
     resolution: {integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==}
@@ -4347,6 +4360,10 @@ snapshots:
     dependencies:
       pure-rand: 6.1.0
 
+  fast-check@4.10.2:
+    dependencies:
+      pure-rand: 8.4.2
+
   fast-copy@4.2.0: {}
 
   fast-decode-uri-component@1.0.1: {}
@@ -4987,6 +5004,8 @@ snapshots:
       once: 1.4.0
 
   pure-rand@6.1.0: {}
+
+  pure-rand@8.4.2: {}
 
   qs@6.16.1:
     dependencies:

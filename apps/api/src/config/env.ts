@@ -2,7 +2,9 @@ import { z } from 'zod'
 
 // В Zod 4 форматы живут на верхнем уровне: z.url(), не z.string().url().
 export const envSchema = z.object({
+  // Владелец: миграции и generate. Приложение ходит под ограниченной ролью.
   DATABASE_URL: z.url(),
+  APP_DATABASE_URL: z.url(),
   REDIS_URL: z.url(),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),

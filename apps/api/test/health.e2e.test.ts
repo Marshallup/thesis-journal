@@ -18,6 +18,7 @@ async function createApp() {
 beforeAll(async () => {
   db = await withTestDb()
   process.env.DATABASE_URL = db.url
+  process.env.APP_DATABASE_URL = db.appUrl
   app = await createApp()
 })
 

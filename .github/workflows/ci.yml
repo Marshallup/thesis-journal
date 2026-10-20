@@ -12,6 +12,8 @@ jobs:
       # разрешает env('DATABASE_URL') жадно и без неё падает. Адрес-заглушка:
       # интеграционные тесты получают свой от Testcontainers.
       DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+      # Тот же случай: ConfigModule валидирует её при импорте app.module.ts.
+      APP_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
     steps:
       - uses: actions/checkout@v7.0.1
       # Версии node и pnpm — из mise.toml, один источник пинов. Теги точные:
@@ -20,6 +22,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Клиент Prisma в .gitignore: без генерации не проходит даже typecheck.
       - run: pnpm db:generate
+      # contracts отдаёт наружу собранный dist/, которого в репозитории нет:
+      # без сборки typecheck не разрешает @thesis/contracts. Порядок важен —
+      # apps/api собирается после генерации клиента Prisma.
+      - run: pnpm build
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm typecheck

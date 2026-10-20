@@ -9,6 +9,7 @@ pnpm install
 docker compose up -d          # postgres, redis, rabbitmq, kafka, clickhouse
 pnpm db:generate              # обязательно после каждого изменения schema.prisma
 pnpm db:migrate               # prisma migrate dev
+pnpm db:role                  # роль приложения на уже поднятую базу, идемпотентно
 pnpm dev                      # api :3000, web :5173
 pnpm test                     # unit + property-based
 pnpm test:int                 # интеграционные, поднимают контейнеры (Testcontainers)
