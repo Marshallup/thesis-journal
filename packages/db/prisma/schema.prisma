@@ -92,7 +92,71 @@ model Trade {
   externalId  String?  @map("external_id")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  lots         Lot[]
+  consumptions LotConsumption[]
+
   @@unique([accountId, provider, externalId], name: "trade_idempotency", map: "trade_idempotency")
   @@index([accountId, executedAt])
   @@map("trades")
+}
+
+// Партия: сколько купили и сколько затрат за ней ещё стоит. Затраты — суммой,
+// а не ценой за единицу: комиссия покупки входит в них целиком.
+model Lot {
+  id            String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId     String   @map("account_id") @db.Uuid
+  instrumentId  String   @map("instrument_id") @db.Uuid
+  // Сделка-открытие лежит в той же схеме core, поэтому связь настоящая.
+  openTradeId   String   @map("open_trade_id") @db.Uuid
+  openTrade     Trade    @relation(fields: [openTradeId], references: [id], onDelete: Restrict)
+  qtyOpen       Decimal  @map("qty_open") @db.Decimal(38, 18)
+  qtyRemaining  Decimal  @map("qty_remaining") @db.Decimal(38, 18)
+  // Цена сделки без комиссии — для показа и сверки с отчётом брокера.
+  price         Decimal  @db.Decimal(28, 8)
+  costOpen      Decimal  @map("cost_open") @db.Decimal(28, 8)
+  costRemaining Decimal  @map("cost_remaining") @db.Decimal(28, 8)
+  openedAt      DateTime @map("opened_at") @db.Timestamptz(6)
+
+  consumptions LotConsumption[]
+
+  @@index([accountId, instrumentId, openedAt])
+  @@map("lots")
+}
+
+// Списание партии при продаже, append-only.
+model LotConsumption {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  // Денормализован ради политики RLS: иначе она шла бы двухуровневым
+  // подзапросом через lots.
+  accountId   String   @map("account_id") @db.Uuid
+  lotId       String   @map("lot_id") @db.Uuid
+  lot         Lot      @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  tradeId     String   @map("trade_id") @db.Uuid
+  trade       Trade    @relation(fields: [tradeId], references: [id], onDelete: Restrict)
+  qty         Decimal  @db.Decimal(38, 18)
+  cost        Decimal  @db.Decimal(28, 8)
+  realizedPnl Decimal  @map("realized_pnl") @db.Decimal(28, 8)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Повторное применение одной продажи не должно задваивать списание.
+  @@unique([lotId, tradeId], name: "lot_consumption_idempotency", map: "lot_consumption_idempotency")
+  @@map("lot_consumptions")
+}
+
+model Position {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId      String   @map("account_id") @db.Uuid
+  instrumentId   String   @map("instrument_id") @db.Uuid
+  quantity       Decimal  @db.Decimal(38, 18)
+  // Точная сумма затрат, а не средняя цена: средняя производна и считается на
+  // чтении. Хранимый округлённый производный показатель разъезжается с лотами.
+  costBasisTotal Decimal  @map("cost_basis_total") @db.Decimal(28, 8)
+  realizedPnl    Decimal  @map("realized_pnl") @db.Decimal(28, 8)
+  // Понадобится на неделе 7 для optimistic locking; ставим сейчас, чтобы потом
+  // не мигрировать живые данные.
+  version        Int      @default(0)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([accountId, instrumentId])
+  @@map("positions")
 }
