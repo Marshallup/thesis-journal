@@ -12,6 +12,7 @@ import type { Env } from './config/env.ts'
 import { DecisionsModule } from './decisions/decisions.module.ts'
 import { HealthModule } from './health/health.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
+import { PortfolioModule } from './portfolio/portfolio.module.ts'
 import { InstrumentsModule } from './instruments/instruments.module.ts'
 import { TradesModule } from './trades/trades.module.ts'
 
@@ -64,6 +65,7 @@ import { TradesModule } from './trades/trades.module.ts'
     InstrumentsModule,
     AccountsModule,
     ImportsModule,
+    PortfolioModule,
   ],
   // Через APP_PIPE, а не useGlobalPipes в main.ts: иначе валидация не включится
   // в тестах, где приложение собирается через Test.createTestingModule.

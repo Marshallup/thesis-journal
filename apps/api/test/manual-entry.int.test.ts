@@ -109,3 +109,33 @@ it('проставляет выведенный вид при создании �
 
   expect(account.kind).toBe('broker')
 })
+
+// Имя заводится ради того, чтобы различать счета, поэтому повтор — опечатка.
+it('не заводит два счёта с одним названием', async () => {
+  const { userId } = await seedUser('naming@example.com')
+  await accounts.create(userId, { ...manual, name: 'ИИС' })
+
+  await expect(accounts.create(userId, { ...manual, name: 'ИИС' })).rejects.toThrow(/уже есть/)
+})
+
+// А безымянных может быть сколько угодно: NULL-ы в уникальном индексе
+// различны, и счёт, заведённый на бегу из формы сделки, имени не требует.
+it('заводит сколько угодно счетов без названия', async () => {
+  const { userId } = await seedUser('nameless@example.com')
+
+  await accounts.create(userId, manual)
+  await accounts.create(userId, manual)
+
+  expect(await accounts.list(userId)).toHaveLength(2)
+})
+
+// Чужое название не мешает: уникальность считается внутри пользователя.
+it('не мешает тёзке у другого пользователя', async () => {
+  const mine = await seedUser('mine-name@example.com')
+  const other = await seedUser('other-name@example.com')
+
+  await accounts.create(mine.userId, { ...manual, name: 'ИИС' })
+  await expect(accounts.create(other.userId, { ...manual, name: 'ИИС' })).resolves.toMatchObject({
+    name: 'ИИС',
+  })
+})

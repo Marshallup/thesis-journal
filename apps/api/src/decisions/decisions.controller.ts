@@ -52,6 +52,17 @@ export class DecisionsController {
     return this.decisions.create(user.userId, body)
   }
 
+  @Post(':id/trades')
+  @ApiOperation({ summary: 'Привязать сделки к решению пачкой; повтор не ошибка' })
+  linkTrades(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', { schema: z.uuid() }) id: string,
+    @Body({ schema: z.object({ tradeIds: z.array(z.uuid()).min(1).max(100) }) })
+    body: { tradeIds: string[] },
+  ) {
+    return this.decisions.linkTrades(user.userId, id, body.tradeIds)
+  }
+
   @Post(':id/revisions')
   @ApiOperation({ summary: 'Ревизия: полный снимок новых значений, исходное решение цело' })
   revise(

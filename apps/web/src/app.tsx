@@ -2,9 +2,12 @@ import { Navigate, Route, Routes } from 'react-router'
 import { AccountForm } from './pages/accounts/new/account-form.tsx'
 import { DecisionForm } from './pages/decision-new/decision-form.tsx'
 import { DecisionsPage } from './pages/decisions/decisions-page.tsx'
+import { ImportPage } from './pages/imports/import-page.tsx'
 import { LoginPage } from './pages/login/login-page.tsx'
+import { PortfolioPage } from './pages/portfolio/portfolio-page.tsx'
 import { TradeForm } from './pages/trades/new/trade-form.tsx'
 import { TradesPage } from './pages/trades/trades-page.tsx'
+import { UnlinkedTradesPage } from './pages/trades/unlinked.tsx'
 import { useSession } from './shared/api/session.tsx'
 
 export function App() {
@@ -31,6 +34,20 @@ export function App() {
       <Route
         path="/trades/new"
         element={state === 'authenticated' ? <TradeForm /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/trades/unlinked"
+        element={
+          state === 'authenticated' ? <UnlinkedTradesPage /> : <Navigate to="/login" replace />
+        }
+      />
+      <Route
+        path="/portfolio"
+        element={state === 'authenticated' ? <PortfolioPage /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/imports"
+        element={state === 'authenticated' ? <ImportPage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/decisions"

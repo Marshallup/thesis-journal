@@ -124,3 +124,72 @@ it('не принимает уверенность вне шкалы 1–5', asy
     }),
   ).rejects.toThrow()
 })
+
+// Ручная привязка из экрана разметки: решает человек, поэтому окно горизонта
+// не проверяется, но счёт, инструмент и направление обязаны совпадать.
+it('привязывает сделки к решению пачкой и не считает повтор ошибкой', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('link@example.com')
+  const decision = await service.create(userId, {
+    ...draft(accountId, instrumentId),
+    thesis: 'размечаю задним числом',
+    postFactum: true,
+  })
+  expect(decision.postFactum).toBe(true)
+
+  const trades = await db.prisma.$transaction([
+    db.prisma.trade.create({
+      data: {
+        accountId,
+        instrumentId,
+        side: 'buy',
+        quantity: '1',
+        price: '100',
+        fee: '0',
+        feeCurrency: 'RUB',
+        executedAt: new Date('2026-01-01T10:00:00Z'),
+        provider: 'manual',
+      },
+    }),
+    db.prisma.trade.create({
+      data: {
+        accountId,
+        instrumentId,
+        side: 'buy',
+        quantity: '2',
+        price: '101',
+        fee: '0',
+        feeCurrency: 'RUB',
+        executedAt: new Date('2026-01-02T10:00:00Z'),
+        provider: 'manual',
+      },
+    }),
+  ])
+  const ids = trades.map((trade) => trade.id)
+
+  expect(await service.linkTrades(userId, decision.id, ids)).toEqual({ linked: 2, skipped: 0 })
+  // Повторная привязка тех же сделок — «уже привязаны», а не падение.
+  expect(await service.linkTrades(userId, decision.id, ids)).toEqual({ linked: 0, skipped: 2 })
+})
+
+it('не привязывает сделку другого направления', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('link-side@example.com')
+  const decision = await service.create(userId, {
+    ...draft(accountId, instrumentId),
+    thesis: 'решение на покупку',
+  })
+  const sell = await db.prisma.trade.create({
+    data: {
+      accountId,
+      instrumentId,
+      side: 'sell',
+      quantity: '1',
+      price: '100',
+      fee: '0',
+      feeCurrency: 'RUB',
+      executedAt: new Date('2026-01-03T10:00:00Z'),
+      provider: 'manual',
+    },
+  })
+
+  await expect(service.linkTrades(userId, decision.id, [sell.id])).rejects.toThrow(/направлению/)
+})

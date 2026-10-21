@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common'
 import { AuthGuard } from '@nestjs/passport'
+import { z } from 'zod'
 import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger'
 import { CurrentUser } from '../auth/current-user.decorator.ts'
 import type { AuthenticatedUser } from '../auth/current-user.decorator.ts'
@@ -18,9 +19,14 @@ export class TradesController {
   constructor(private readonly trades: TradesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Сделки пользователя, свежие первыми' })
-  list(@CurrentUser() user: AuthenticatedUser) {
-    return this.trades.list(user.userId)
+  @ApiOperation({ summary: 'Сделки пользователя, свежие первыми; linked=false — без решения' })
+  list(
+    @CurrentUser() user: AuthenticatedUser,
+    // В query всё приходит строкой, поэтому «false» — это строка, а не boolean.
+    @Query('linked', { schema: z.enum(['true', 'false']).optional() })
+    linked: 'true' | 'false' | undefined,
+  ) {
+    return this.trades.list(user.userId, linked ? { linked: linked === 'true' } : {})
   }
 
   @Post()

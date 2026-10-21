@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "tsc -p tsconfig.build.json && NODE_ENV=development node dist/main.js",
+    "dev": "sh ./dev.sh",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
