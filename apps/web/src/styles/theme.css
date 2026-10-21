@@ -1,0 +1,57 @@
+@import 'tailwindcss';
+
+/* Шрифты локальные, а не с CDN: дневник решений не должен отправлять запрос
+   третьей стороне на каждой загрузке, а версии пинуются лок-файлом. */
+@import '@fontsource/source-serif-4/400.css';
+@import '@fontsource/source-serif-4/600.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+
+@theme {
+  /* Цвет */
+  --color-ink: #16233a; /* основной текст, «чернила» */
+  --color-ink-muted: #5c6b7f; /* вторичный текст */
+  --color-paper: #eff1f3; /* фон приложения */
+  --color-surface: #f7f8f9; /* поднятые поверхности: шторки, поповеры */
+  --color-rule: #d5dae0; /* линейки и разделители */
+  --color-accent: #2447d8; /* единственный акцент: ссылки, фокус, активное */
+  --color-gain: #0f766e; /* прибыль */
+  --color-loss: #8b2c55; /* убыток */
+
+  /* Типографика */
+  --font-serif: 'Source Serif 4', Georgia, serif;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+
+  --text-xs: 0.75rem; /* 12px — подписи в таблицах */
+  --text-sm: 0.8125rem; /* 13px — интерфейсный минимум */
+  --text-base: 0.9375rem; /* 15px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.5rem; /* 24px */
+  --text-2xl: 2.125rem; /* 34px — только стоимость портфеля */
+
+  /* Радиусы: маленькие. Документ, а не SaaS-плитка */
+  --radius-sm: 2px; /* поля ввода, кнопки */
+  --radius-md: 6px; /* модалки и шторки — и только они */
+}
+
+@layer base {
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.45;
+  }
+
+  /* Человеческий текст — сериф. Строка до 70 символов, межстрочный 1.6. */
+  .prose-thesis {
+    font-family: var(--font-serif);
+    line-height: 1.6;
+    max-width: 70ch;
+  }
+
+  /* Все числовые колонки: без этого цифры прыгают при обновлении цены. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}

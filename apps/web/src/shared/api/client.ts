@@ -1,0 +1,50 @@
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('unauthorized')
+    this.name = 'UnauthorizedError'
+  }
+}
+
+// Access-токен живёт в памяти, а не в localStorage: оттуда его забирает любой
+// XSS. Перезагрузка страницы восстанавливает сессию через refresh-cookie.
+let accessToken: string | null = null
+
+export function setAccessToken(token: string | null): void {
+  accessToken = token
+}
+
+// Сырой fetch, а не api(): иначе 401 на самом refresh снова позвал бы refresh.
+export async function refreshSession(): Promise<boolean> {
+  const response = await fetch('/auth/refresh', { method: 'POST' })
+  if (!response.ok) {
+    accessToken = null
+    return false
+  }
+  const body = (await response.json()) as { accessToken: string }
+  accessToken = body.accessToken
+  return true
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const send = () =>
+    fetch(path, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+        ...init.headers,
+      },
+    })
+
+  let response = await send()
+
+  // Повтор ровно один. Без ограничения истёкшая сессия даёт бесконечный цикл
+  // «запрос → 401 → refresh → 401 → запрос».
+  if (response.status === 401 && (await refreshSession())) {
+    response = await send()
+  }
+  if (response.status === 401) throw new UnauthorizedError()
+  if (!response.ok) throw new Error(`${init.method ?? 'GET'} ${path} → ${response.status}`)
+
+  return (await response.json()) as T
+}
