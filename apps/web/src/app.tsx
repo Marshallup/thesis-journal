@@ -4,6 +4,7 @@ import { DecisionForm } from './pages/decision-new/decision-form.tsx'
 import { DecisionsPage } from './pages/decisions/decisions-page.tsx'
 import { ImportPage } from './pages/imports/import-page.tsx'
 import { LoginPage } from './pages/login/login-page.tsx'
+import { PortfolioPage } from './pages/portfolio/portfolio-page.tsx'
 import { TradeForm } from './pages/trades/new/trade-form.tsx'
 import { TradesPage } from './pages/trades/trades-page.tsx'
 import { UnlinkedTradesPage } from './pages/trades/unlinked.tsx'
@@ -39,6 +40,10 @@ export function App() {
         element={
           state === 'authenticated' ? <UnlinkedTradesPage /> : <Navigate to="/login" replace />
         }
+      />
+      <Route
+        path="/portfolio"
+        element={state === 'authenticated' ? <PortfolioPage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/imports"
