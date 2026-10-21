@@ -6,6 +6,7 @@ import { ImportPage } from './pages/imports/import-page.tsx'
 import { LoginPage } from './pages/login/login-page.tsx'
 import { TradeForm } from './pages/trades/new/trade-form.tsx'
 import { TradesPage } from './pages/trades/trades-page.tsx'
+import { UnlinkedTradesPage } from './pages/trades/unlinked.tsx'
 import { useSession } from './shared/api/session.tsx'
 
 export function App() {
@@ -32,6 +33,12 @@ export function App() {
       <Route
         path="/trades/new"
         element={state === 'authenticated' ? <TradeForm /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/trades/unlinked"
+        element={
+          state === 'authenticated' ? <UnlinkedTradesPage /> : <Navigate to="/login" replace />
+        }
       />
       <Route
         path="/imports"

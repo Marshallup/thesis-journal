@@ -43,6 +43,9 @@ export function TradesPage() {
           <Link to="/trades/new" className="text-accent">
             Записать сделку
           </Link>
+          <Link to="/trades/unlinked" className="text-accent">
+            Без тезиса
+          </Link>
           <Link to="/imports" className="text-accent">
             Импорт отчёта
           </Link>

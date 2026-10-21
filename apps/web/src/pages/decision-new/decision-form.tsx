@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { accountLabel } from '../../shared/ui/account-label.ts'
 import type { LabelledAccount } from '../../shared/ui/account-label.ts'
@@ -33,9 +33,15 @@ export function DecisionForm() {
     queryFn: () => api<Instrument[]>('/instruments'),
   })
 
-  const [accountId, setAccountId] = useState('')
-  const [instrumentId, setInstrumentId] = useState('')
-  const [side, setSide] = useState<'buy' | 'sell'>('buy')
+  // Форму открывают и с экрана «сделки без тезиса» — тогда счёт, бумага и
+  // сторона известны из сделки, и переспрашивать их значит приглашать ошибку.
+  const [params] = useSearchParams()
+  const postFactum = params.get('postFactum') === '1'
+  const next = params.get('next') ?? '/decisions'
+
+  const [accountId, setAccountId] = useState(params.get('accountId') ?? '')
+  const [instrumentId, setInstrumentId] = useState(params.get('instrumentId') ?? '')
+  const [side, setSide] = useState<'buy' | 'sell'>(params.get('side') === 'sell' ? 'sell' : 'buy')
   const [thesis, setThesis] = useState('')
   const [horizonDays, setHorizonDays] = useState<number>(90)
   const [conviction, setConviction] = useState<number>(3)
@@ -69,6 +75,7 @@ export function DecisionForm() {
           horizonDays,
           conviction,
           mood,
+          ...(postFactum ? { postFactum: true } : {}),
           ...(invalidator ? { invalidator } : {}),
           ...(freeText ? { freeText } : {}),
         }),
@@ -77,15 +84,18 @@ export function DecisionForm() {
       await queryClient.invalidateQueries({ queryKey: ['decisions'] })
       // В журнал, а не на сделки: запись должна быть видна сразу, иначе
       // человек не понимает, произошло ли что-нибудь.
-      void navigate('/decisions')
+      void navigate(next)
     },
   })
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
-      <h1 className="font-serif text-xl">Решение</h1>
+      <h1 className="font-serif text-xl">{postFactum ? 'Решение задним числом' : 'Решение'}</h1>
       <p className="mt-1 text-sm text-ink-muted">
-        Записывается до сделки и больше не меняется. Правка создаёт ревизию.
+        {postFactum
+          ? // Пометка не наказание, а защита статистики: задним числом тезис пишется, когда исход уже известен, и такие записи нельзя смешивать с теми, что писались до сделки.
+            'Сделка уже есть, тезис пишется после. Запись будет помечена как post factum и не попадёт в поведенческие срезы — иначе они покажут не ваши решения, а то, как вы их объясняете.'
+          : 'Записывается до сделки и больше не меняется. Правка создаёт ревизию.'}
       </p>
 
       <form
