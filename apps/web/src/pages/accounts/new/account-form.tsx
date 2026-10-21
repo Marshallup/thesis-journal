@@ -23,6 +23,7 @@ export function AccountForm() {
   const [params] = useSearchParams()
   const next = params.get('next') ?? '/trades/new'
 
+  const [name, setName] = useState('')
   const [provider, setProvider] = useState<string>('manual')
   const [baseCurrency, setBaseCurrency] = useState('RUB')
   const [isIis, setIsIis] = useState(false)
@@ -31,7 +32,14 @@ export function AccountForm() {
     mutationFn: () =>
       api<Account>('/accounts', {
         method: 'POST',
-        body: JSON.stringify({ provider, baseCurrency, isIis }),
+        // Пустое имя не отправляем вовсе: в базе ему место NULL, а не пустая
+        // строка, иначе два безымянных счёта столкнутся на уникальном индексе.
+        body: JSON.stringify({
+          ...(name.trim() ? { name: name.trim() } : {}),
+          provider,
+          baseCurrency,
+          isIis,
+        }),
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['accounts'] })
@@ -54,6 +62,21 @@ export function AccountForm() {
           save.mutate()
         }}
       >
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-ink-muted">Название, необязательно</span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={50}
+            placeholder="ИИС, брокерский, старый у Сбера"
+            className="rounded-sm border border-rule bg-surface px-2 py-1.5"
+          />
+          <span className="text-xs text-ink-muted">
+            Нужно, чтобы различать счета в списках. Два счёта одного брокера без названий отличаются
+            только датой открытия.
+          </span>
+        </label>
+
         <label className="flex flex-col gap-1">
           <span className="text-sm text-ink-muted">Где счёт</span>
           <select

@@ -45,6 +45,11 @@ model Account {
   // каскад удалил бы счёт и спрятал их за политикой RLS навсегда.
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  // Имя даёт человек: «ИИС», «брокерский», «старый у Сбера». Без него два
+  // счёта одного брокера в списке выбора неразличимы, и интерфейсу остаётся
+  // показывать хвост идентификатора. Необязательное: заводя счёт по ходу
+  // записи сделки, придумывать название незачем.
+  name         String?
   // Строки, а не enum: добавить провайдера не должно требовать ALTER TYPE.
   provider     String // bybit | bitget | tinvest | sber | manual
   kind         String // exchange | broker | manual | paper
@@ -53,6 +58,10 @@ model Account {
   isIis        Boolean  @default(false) @map("is_iis")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  // Два счёта с одним именем у одного человека — это не выбор, а опечатка:
+  // имя и заводится ради того, чтобы различать. NULL-ы в индексе различны,
+  // поэтому безымянных счетов может быть сколько угодно.
+  @@unique([userId, name], name: "account_name_unique", map: "account_name_unique")
   @@index([userId])
   @@map("accounts")
 }

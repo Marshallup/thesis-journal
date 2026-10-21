@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  HttpCode,
   Param,
   Post,
   Res,
@@ -58,6 +59,9 @@ export class ImportsController {
   // файл второй раз. Отказы здесь свои: 409 — отчёт по этому счёту уже
   // применяется, 400 — в отчёте есть продажи без покупок.
   @Post(':id/apply')
+  // 200, а не дефолтный для POST 201: по этому адресу ничего не создаётся,
+  // применение меняет состояние уже существующего импорта.
+  @HttpCode(200)
   @ApiOperation({ summary: 'Применить залитый отчёт: сделки, лоты, позиции, деньги' })
   run(
     @CurrentUser() user: AuthenticatedUser,

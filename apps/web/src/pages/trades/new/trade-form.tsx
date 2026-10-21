@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { api } from '../../../shared/api/client.ts'
+import { accountLabel } from '../../../shared/ui/account-label.ts'
+import type { LabelledAccount } from '../../../shared/ui/account-label.ts'
 
-type Account = { id: string; provider: string; isIis: boolean }
+type Account = LabelledAccount
 type Instrument = { id: string; symbol: string }
 
 const CLASSES = ['equity', 'bond', 'etf', 'crypto', 'currency'] as const
@@ -125,8 +127,7 @@ export function TradeForm() {
               <option value="">выберите</option>
               {accounts.data?.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {account.provider}
-                  {account.isIis ? ', ИИС' : ''}
+                  {accountLabel(account, accounts.data ?? [])}
                 </option>
               ))}
             </select>

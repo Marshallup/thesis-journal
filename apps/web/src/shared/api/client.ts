@@ -1,6 +1,29 @@
 // Один префикс на весь клиент: версия API меняется здесь, а не в каждом вызове.
 const BASE = '/api/v1'
 
+// Код и тело ответа, а не только текст: экранам надо отличать «отчёт уже
+// применяется» (409) от «в отчёте продажи без покупок» (400) и показывать
+// человеку то, что написал сервер, а не «POST /api/v1/imports → 400».
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: unknown,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+// Nest кладёт текст в message, и у ошибок валидации это массив.
+function messageOf(body: unknown, fallback: string): string {
+  if (typeof body !== 'object' || body === null) return fallback
+  const { message } = body as { message?: unknown }
+  if (typeof message === 'string' && message !== '') return message
+  if (Array.isArray(message)) return message.join('; ')
+  return fallback
+}
+
 export class UnauthorizedError extends Error {
   constructor() {
     super('unauthorized')
@@ -46,7 +69,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     fetch(`${BASE}${path}`, {
       ...init,
       headers: {
-        'content-type': 'application/json',
+        // FormData сам выставляет content-type вместе с boundary; задать его
+        // руками — значит сломать разбор multipart на сервере.
+        ...(init.body instanceof FormData ? {} : { 'content-type': 'application/json' }),
         ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
         ...init.headers,
       },
@@ -61,7 +86,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (response.status === 401) throw new UnauthorizedError()
   if (!response.ok) {
-    throw new Error(`${init.method ?? 'GET'} ${BASE}${path} → ${response.status}`)
+    // Тело читаем всегда: там лежит объяснение, ради которого сервер и
+    // старался. Если его нет — остаётся метод, путь и код.
+    const body: unknown = await response.json().catch(() => null)
+    throw new ApiError(
+      response.status,
+      body,
+      messageOf(body, `${init.method ?? 'GET'} ${BASE}${path} → ${response.status}`),
+    )
   }
 
   return (await response.json()) as T
