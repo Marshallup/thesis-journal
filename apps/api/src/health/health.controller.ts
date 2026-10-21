@@ -1,8 +1,9 @@
-import { Controller, Get } from '@nestjs/common'
+import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common'
 import { HealthCheck, HealthCheckService, PrismaHealthIndicator } from '@nestjs/terminus'
 import { PrismaService } from '../db/prisma.service.ts'
 
-@Controller('health')
+// Вне версий и вне префикса: проба должна быть по одному адресу всегда.
+@Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,

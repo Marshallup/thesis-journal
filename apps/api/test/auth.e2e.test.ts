@@ -3,6 +3,7 @@ import request from 'supertest'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { AppModule } from '../src/app.module.ts'
 import { AuthService } from '../src/auth/auth.service.ts'
+import { configureApp } from '../src/config/configure-app.ts'
 import { withTestDb } from './setup-db.ts'
 
 const PASSWORD = 'correct horse battery'
@@ -13,6 +14,9 @@ let db: Awaited<ReturnType<typeof withTestDb>>
 async function createApp() {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
   const instance = moduleRef.createNestApplication()
+  // Та же настройка, что в bootstrap: иначе тесты ходят по другим адресам,
+  // чем прод, и префикс остаётся непроверенным.
+  configureApp(instance)
   await instance.init()
   return instance
 }
@@ -28,10 +32,10 @@ function refreshCookie(response: request.Response): string {
 async function registerAndLogin(email: string) {
   const agent = request.agent(app.getHttpServer())
 
-  const registered = await agent.post('/auth/register').send({ email, password: PASSWORD })
+  const registered = await agent.post('/api/v1/auth/register').send({ email, password: PASSWORD })
   expect(registered.status).toBe(201)
 
-  const login = await agent.post('/auth/login').send({ email, password: PASSWORD })
+  const login = await agent.post('/api/v1/auth/login').send({ email, password: PASSWORD })
   expect(login.status).toBe(200)
 
   return { agent, registered, login }
@@ -54,15 +58,17 @@ it('не принимает refresh-токен повторно', async () => {
   const first = refreshCookie(login)
 
   // агент обновился — токен провернулся, cookie заменилась
-  const rotated = await agent.post('/auth/refresh')
+  const rotated = await agent.post('/api/v1/auth/refresh')
   expect(rotated.status).toBe(200)
 
   // старая cookie больше не принимается
-  const replay = await request(app.getHttpServer()).post('/auth/refresh').set('Cookie', first)
+  const replay = await request(app.getHttpServer())
+    .post('/api/v1/auth/refresh')
+    .set('Cookie', first)
   expect(replay.status).toBe(401)
 
   // а у легитимного клиента сессия жива: отзыва цепочки в этой задаче нет
-  const again = await agent.post('/auth/refresh')
+  const again = await agent.post('/api/v1/auth/refresh')
   expect(again.status).toBe(200)
 })
 
@@ -83,12 +89,12 @@ it('при параллельной ротации одного токена у�
 
 it('считает email без учёта регистра при регистрации', async () => {
   const first = await request(app.getHttpServer())
-    .post('/auth/register')
+    .post('/api/v1/auth/register')
     .send({ email: 'case@example.com', password: PASSWORD })
   expect(first.status).toBe(201)
 
   const second = await request(app.getHttpServer())
-    .post('/auth/register')
+    .post('/api/v1/auth/register')
     .send({ email: 'CASE@EXAMPLE.COM', password: PASSWORD })
   expect(second.status).toBe(409)
 })
@@ -99,17 +105,17 @@ it('отдаёт текущего пользователя по access-токе�
   const { accessToken } = login.body as { accessToken: string }
 
   const ok = await request(app.getHttpServer())
-    .get('/auth/me')
+    .get('/api/v1/auth/me')
     .set('Authorization', `Bearer ${accessToken}`)
   expect(ok.status).toBe(200)
   expect(ok.body).toEqual({ userId: id })
 
-  const anonymous = await request(app.getHttpServer()).get('/auth/me')
+  const anonymous = await request(app.getHttpServer()).get('/api/v1/auth/me')
   expect(anonymous.status).toBe(401)
 
   // Подделанная подпись: меняем последний символ.
   const tampered = await request(app.getHttpServer())
-    .get('/auth/me')
+    .get('/api/v1/auth/me')
     .set(
       'Authorization',
       `Bearer ${accessToken.slice(0, -1)}${accessToken.endsWith('a') ? 'b' : 'a'}`,

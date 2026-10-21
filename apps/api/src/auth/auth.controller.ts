@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config'
 import { AuthGuard } from '@nestjs/passport'
 import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger'
 import type { Request, Response } from 'express'
+import { apiPath } from '../config/api.ts'
 import type { Env } from '../config/env.ts'
 import { AuthService } from './auth.service.ts'
 import type { Session } from './auth.service.ts'
@@ -50,7 +51,7 @@ export class AuthController {
       secure: this.config.get('NODE_ENV', { infer: true }) === 'production',
       // Только там, где её потребляют: долгоживущий секрет не должен
       // ездить по сети лишний раз.
-      path: '/auth/refresh',
+      path: apiPath('auth', 'refresh'),
       expires: session.refreshExpiresAt,
     })
   }

@@ -6,10 +6,14 @@ import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { Logger, LoggerErrorInterceptor } from 'nestjs-pino'
 import { AppModule } from './app.module.ts'
+import { API_PREFIX, API_VERSION } from './config/api.ts'
+import { configureApp } from './config/configure-app.ts'
 import type { Env } from './config/env.ts'
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true })
+
+  configureApp(app)
 
   app.useLogger(app.get(Logger))
   app.useGlobalInterceptors(new LoggerErrorInterceptor())
@@ -30,7 +34,7 @@ async function bootstrap() {
 
   // Сам Nest адрес не печатает, а он нужен каждый запуск.
   const log = new NestLogger('Bootstrap')
-  log.log(`api http://localhost:${port}`)
+  log.log(`api http://localhost:${port}/${API_PREFIX}/v${API_VERSION}`)
   log.log(`docs http://localhost:${port}/docs`)
 }
 
