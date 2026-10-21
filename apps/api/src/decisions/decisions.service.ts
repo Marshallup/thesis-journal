@@ -1,13 +1,17 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../db/prisma.service.ts'
 import type { CreateDecision, ReviseDecision } from './dto.ts'
+import { MatchingService } from './matching.service.ts'
 
 @Injectable()
 export class DecisionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly matching: MatchingService,
+  ) {}
 
-  create(userId: string, dto: CreateDecision) {
-    return this.prisma.withUser(userId, async (tx) => {
+  async create(userId: string, dto: CreateDecision) {
+    const decision = await this.prisma.withUser(userId, async (tx) => {
       // Явный фильтр по userId, RLS под ним — второй рубеж. Заодно проверка
       // владения счётом: чужой не найдётся.
       await tx.account.findFirstOrThrow({ where: { id: dto.accountId, userId } })
@@ -28,6 +32,11 @@ export class DecisionsService {
         },
       })
     })
+
+    // Срабатывает редко — сделка обязана быть позже решения, — но вызов
+    // предусмотрен планом и служит точкой повторного прогона.
+    await this.matching.matchDecision(userId, decision.id)
+    return decision
   }
 
   // Исходное решение не трогаем — его защищает триггер. Правка это новая строка

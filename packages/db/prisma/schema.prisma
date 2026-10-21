@@ -227,7 +227,11 @@ model DecisionTrade {
   trade      Trade    @relation(fields: [tradeId], references: [id], onDelete: Restrict)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@unique([decisionId, tradeId], name: "decision_trade_link", map: "decision_trade_link")
-  @@index([tradeId])
+  // Одна сделка исполняет одно решение: MatchInput.linkedDecisionId
+  // единственный, и уникальность по tradeId не даёт двум автопривязкам
+  // проскочить одновременно. Обратное не запрещено — одно решение может
+  // исполниться несколькими сделками, например частичными продажами.
+  @@unique([tradeId], name: "decision_trade_one_per_trade", map: "decision_trade_one_per_trade")
+  @@index([decisionId])
   @@map("decision_trades")
 }

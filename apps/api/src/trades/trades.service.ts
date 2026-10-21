@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common'
 import { Money } from '@thesis/contracts'
 import type { Prisma } from '@thesis/db'
 import { PrismaService } from '../db/prisma.service.ts'
+import { MatchingService } from '../decisions/matching.service.ts'
 import { consumeFifo } from './domain/fifo.ts'
 import type { ApplyTrade } from './dto.ts'
 
@@ -9,7 +10,10 @@ const ZERO = Money.of('0')
 
 @Injectable()
 export class TradesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly matching: MatchingService,
+  ) {}
 
   list(userId: string) {
     return this.prisma.withUser(userId, (tx) =>
@@ -26,7 +30,7 @@ export class TradesService {
     const fee = Money.of(dto.fee)
     const executedAt = new Date(dto.executedAt)
 
-    return this.prisma.withUser(userId, async (tx) => {
+    const applied = await this.prisma.withUser(userId, async (tx) => {
       // Фильтр по userId явный, RLS под ним — второй рубеж. Заодно это и
       // проверка владения счётом: чужой просто не найдётся.
       const account = await tx.account.findFirstOrThrow({ where: { id: dto.accountId, userId } })
@@ -112,6 +116,12 @@ export class TradesService {
       await this.movePosition(tx, dto, ZERO.minus(quantity), ZERO.minus(soldCost), realized)
       return trade
     })
+
+    // После транзакции, а не внутри: ошибка матчинга не должна отменять
+    // запись сделки. Непривязанную сделку можно размётить позже, незаписанную
+    // восстановить нечем.
+    await this.matching.matchTrade(userId, applied.id)
+    return applied
   }
 
   // Одним оператором с ON CONFLICT: «сначала SELECT, потом INSERT» здесь даёт
