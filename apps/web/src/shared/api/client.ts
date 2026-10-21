@@ -1,3 +1,6 @@
+// Один префикс на весь клиент: версия API меняется здесь, а не в каждом вызове.
+const BASE = '/api/v1'
+
 export class UnauthorizedError extends Error {
   constructor() {
     super('unauthorized')
@@ -28,7 +31,7 @@ export function refreshSession(): Promise<boolean> {
 
 // Сырой fetch, а не api(): иначе 401 на самом refresh снова позвал бы refresh.
 async function requestRefresh(): Promise<boolean> {
-  const response = await fetch('/auth/refresh', { method: 'POST' })
+  const response = await fetch(`${BASE}/auth/refresh`, { method: 'POST' })
   if (!response.ok) {
     accessToken = null
     return false
@@ -40,7 +43,7 @@ async function requestRefresh(): Promise<boolean> {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const send = () =>
-    fetch(path, {
+    fetch(`${BASE}${path}`, {
       ...init,
       headers: {
         'content-type': 'application/json',
@@ -57,7 +60,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     response = await send()
   }
   if (response.status === 401) throw new UnauthorizedError()
-  if (!response.ok) throw new Error(`${init.method ?? 'GET'} ${path} → ${response.status}`)
+  if (!response.ok) {
+    throw new Error(`${init.method ?? 'GET'} ${BASE}${path} → ${response.status}`)
+  }
 
   return (await response.json()) as T
 }

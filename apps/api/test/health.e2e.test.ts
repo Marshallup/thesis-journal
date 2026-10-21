@@ -3,6 +3,7 @@ import request from 'supertest'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { AppModule } from '../src/app.module.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
+import { configureApp } from '../src/config/configure-app.ts'
 import { withTestDb } from './setup-db.ts'
 
 let app: Awaited<ReturnType<typeof createApp>>
@@ -11,6 +12,9 @@ let db: Awaited<ReturnType<typeof withTestDb>>
 async function createApp() {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
   const instance = moduleRef.createNestApplication()
+  // Та же настройка, что в bootstrap: иначе тесты ходят по другим адресам,
+  // чем прод, и префикс остаётся непроверенным.
+  configureApp(instance)
   await instance.init()
   return instance
 }
