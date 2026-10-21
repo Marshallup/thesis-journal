@@ -73,7 +73,9 @@ export function DecisionForm() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['decisions'] })
-      void navigate('/')
+      // В журнал, а не на сделки: запись должна быть видна сразу, иначе
+      // человек не понимает, произошло ли что-нибудь.
+      void navigate('/decisions')
     },
   })
 

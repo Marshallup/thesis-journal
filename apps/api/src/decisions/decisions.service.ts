@@ -82,7 +82,12 @@ export class DecisionsService {
     return this.prisma.withUser(userId, (tx) =>
       tx.decision.findMany({
         orderBy: { createdAt: 'desc' },
-        include: { revisions: { orderBy: { createdAt: 'desc' } } },
+        include: {
+          revisions: { orderBy: { createdAt: 'desc' } },
+          // decision_trades и trades принадлежат одному сервису core, поэтому
+          // связь между ними настоящая и include здесь законен.
+          trades: { include: { trade: true }, orderBy: { createdAt: 'asc' } },
+        },
       }),
     )
   }
