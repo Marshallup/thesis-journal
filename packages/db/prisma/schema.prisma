@@ -235,3 +235,21 @@ model DecisionTrade {
   @@index([decisionId])
   @@map("decision_trades")
 }
+
+// Сырьё хранится целиком: найдётся баг в маппинге — перегоним из него, а не
+// пойдём выпрашивать отчёт заново. Владелец по design.md:74 — ingestor.
+model RawImport {
+  id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId String   @map("account_id") @db.Uuid
+  source    String // sber | csv | bybit | tinvest
+  // sha256 от содержимого, не от имени: один и тот же отчёт под другим именем
+  // остаётся тем же отчётом.
+  fileHash  String   @map("file_hash")
+  payload   Bytes
+  status    String // pending | parsed | failed
+  error     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([accountId, fileHash], name: "raw_import_idempotency", map: "raw_import_idempotency")
+  @@map("raw_imports")
+}
