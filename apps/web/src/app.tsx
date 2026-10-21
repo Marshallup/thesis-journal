@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router'
 import { AccountForm } from './pages/accounts/new/account-form.tsx'
 import { DecisionForm } from './pages/decision-new/decision-form.tsx'
+import { DecisionsPage } from './pages/decisions/decisions-page.tsx'
 import { LoginPage } from './pages/login/login-page.tsx'
 import { TradeForm } from './pages/trades/new/trade-form.tsx'
 import { TradesPage } from './pages/trades/trades-page.tsx'
@@ -30,6 +31,10 @@ export function App() {
       <Route
         path="/trades/new"
         element={state === 'authenticated' ? <TradeForm /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/decisions"
+        element={state === 'authenticated' ? <DecisionsPage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/decisions/new"
