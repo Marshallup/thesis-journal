@@ -13,8 +13,21 @@ export function setAccessToken(token: string | null): void {
   accessToken = token
 }
 
+// Один общий запрос на всех, кто попросил обновиться, пока он летит.
+// Ротация на сервере списывает refresh-токен первым же обращением, поэтому
+// второй параллельный запрос гарантированно получит 401 — и затрёт токен,
+// добытый первым. Пара параллельных 401 на экране сделок приводит сюда же.
+let inFlight: Promise<boolean> | null = null
+
+export function refreshSession(): Promise<boolean> {
+  inFlight ??= requestRefresh().finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
 // Сырой fetch, а не api(): иначе 401 на самом refresh снова позвал бы refresh.
-export async function refreshSession(): Promise<boolean> {
+async function requestRefresh(): Promise<boolean> {
   const response = await fetch('/auth/refresh', { method: 'POST' })
   if (!response.ok) {
     accessToken = null
