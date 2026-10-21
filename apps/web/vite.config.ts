@@ -9,10 +9,7 @@ export default defineConfig({
     // Прокси, а не CORS: refresh живёт в httpOnly-cookie с SameSite=strict,
     // и на чужом origin браузер её просто не отправит.
     proxy: {
-      '/auth': 'http://localhost:3000',
-      '/trades': 'http://localhost:3000',
-      '/decisions': 'http://localhost:3000',
-      '/instruments': 'http://localhost:3000',
+      '/api': 'http://localhost:3000',
     },
   },
 })
