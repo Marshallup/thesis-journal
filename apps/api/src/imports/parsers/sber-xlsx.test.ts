@@ -12,6 +12,7 @@ it('разбирает покупку акции', async () => {
     kind: 'trade',
     side: 'buy',
     ticker: 'SBER',
+    instrumentClass: 'equity',
     quantity: '10',
     price: '250.5',
     currency: 'RUB',
