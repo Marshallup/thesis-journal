@@ -4,10 +4,15 @@ import readXlsxFile from 'read-excel-file/node'
 
 type CashKind = 'dividend' | 'coupon' | 'tax' | 'deposit' | 'fee'
 
+// Класс нужен не для красоты: инструмент в справочнике уникален по паре
+// (symbol, class), и без класса импорту нечем получить instrumentId.
+export type InstrumentClass = 'equity' | 'bond' | 'etf' | 'crypto' | 'currency'
+
 export type RawOperation = {
   kind: 'trade' | 'cash'
   side?: 'buy' | 'sell'
   ticker?: string
+  instrumentClass?: InstrumentClass
   quantity?: string
   price?: string
   fee?: string
@@ -31,6 +36,12 @@ const CASH_SHEET = 'Движение ДС'
 const RAW_NUMBERS = { parseNumber: (value: string): string => value }
 
 const SIDES: Record<string, 'buy' | 'sell'> = { Покупка: 'buy', Продажа: 'sell' }
+
+// В настоящей выгрузке за год встретилось одно значение — «Акция». Остальные
+// названия Сбера неизвестны, и угадывать их нельзя: неверный класс разводит
+// сделки по одной бумаге на два инструмента, а молчаливого способа это заметить
+// нет. Поэтому незнакомый тип падает, как незнакомая операция.
+const INSTRUMENT_CLASSES: Record<string, InstrumentClass> = { Акция: 'equity' }
 
 // Названия сняты с настоящей выгрузки. Знак — наш: в файле сумма всегда
 // положительная, направление несёт только название операции, а сумма ledger
@@ -163,11 +174,18 @@ function parseTrades({ rows, cell }: Sheet): RawOperation[] {
       amountOf(cell(row, 'Объем сделки'), 'Объем сделки'),
     )
 
+    const instrumentType = text(cell(row, 'Тип финансового инструмента'))
+    const instrumentClass = INSTRUMENT_CLASSES[instrumentType]
+    if (!instrumentClass) {
+      throw new Error(`лист «${TRADES_SHEET}»: неизвестный тип инструмента «${instrumentType}»`)
+    }
+
     return [
       {
         kind: 'trade' as const,
         side,
         ticker: text(cell(row, 'Код финансового инструмента')),
+        instrumentClass,
         quantity: quantity.toString(),
         price: price.toString(),
         // Комиссия в листе сделок отсутствует и к сделке не привязывается:

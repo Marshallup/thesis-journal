@@ -238,6 +238,34 @@ model DecisionTrade {
 
 // Сырьё хранится целиком: найдётся баг в маппинге — перегоним из него, а не
 // пойдём выпрашивать отчёт заново. Владелец по design.md:74 — ingestor.
+model CashLedger {
+  id        String  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId String  @map("account_id") @db.Uuid
+  // У пополнения инструмента нет, у дивиденда и налога есть. Связи, как у
+  // сделок и лотов, нет: справочник инструментов общий и живёт отдельно.
+  instrumentId String? @map("instrument_id") @db.Uuid
+
+  kind String // dividend | coupon | tax | deposit | fee
+  // Подписанная: списание отрицательное. Направление несёт знак, а не вид
+  // операции, потому что сверка задачи 34 складывает ledger и сравнивает
+  // сумму с балансом. CHECK (amount >= 0) здесь был бы ровно наоборот —
+  // он стоит на cash_balances, где остаток и правда не может быть отрицательным.
+  amount     Decimal  @db.Decimal(28, 8)
+  currency   String   @db.Char(3)
+  // Дата самой операции по отчёту брокера, не дата записи.
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  provider   String
+  // Ключ идемпотентности импорта: у операции, введённой руками, его нет.
+  externalId String?  @map("external_id")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Зеркально trade_idempotency: повторная заливка того же отчёта не задваивает
+  // ни сделки, ни деньги.
+  @@unique([accountId, provider, externalId], name: "cash_ledger_idempotency", map: "cash_ledger_idempotency")
+  @@index([accountId, occurredAt])
+  @@map("cash_ledger")
+}
+
 model RawImport {
   id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String   @map("account_id") @db.Uuid

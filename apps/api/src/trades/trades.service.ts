@@ -8,6 +8,14 @@ import type { ApplyTrade } from './dto.ts'
 
 const ZERO = Money.of('0')
 
+// Импортированная сделка приносит провайдера и свой номер из отчёта, ручная —
+// нет, и external_id у неё остаётся NULL.
+export type ApplyInput = ApplyTrade & { provider: string; externalId: string | null }
+
+// Нужны только эти два поля; передавать весь счёт незачем, а читать его на
+// каждую строку отчёта — лишние N запросов.
+type TradeAccount = { id: string; baseCurrency: string }
+
 @Injectable()
 export class TradesService {
   constructor(
@@ -21,100 +29,24 @@ export class TradesService {
     )
   }
 
-  // Всё в одной транзакции: сделка, лоты и позиция обязаны измениться вместе,
-  // иначе сумма остатков лотов разойдётся с позицией.
   async apply(userId: string, dto: ApplyTrade) {
-    const quantity = Money.of(dto.quantity)
-    if (quantity.eq(ZERO)) throw new BadRequestException('quantity must be positive')
-    const price = Money.of(dto.price)
-    const fee = Money.of(dto.fee)
-    const executedAt = new Date(dto.executedAt)
-
     const applied = await this.prisma.withUser(userId, async (tx) => {
       // Фильтр по userId явный, RLS под ним — второй рубеж. Заодно это и
       // проверка владения счётом: чужой просто не найдётся.
       const account = await tx.account.findFirstOrThrow({ where: { id: dto.accountId, userId } })
-
-      const trade = await tx.trade.create({
-        data: {
-          accountId: dto.accountId,
-          instrumentId: dto.instrumentId,
-          side: dto.side,
-          quantity: dto.quantity,
-          price: dto.price,
-          fee: dto.fee,
-          feeCurrency: account.baseCurrency,
-          executedAt,
-          provider: 'manual',
-        },
+      const inserted = await this.applyWithin(tx, account, {
+        ...dto,
+        provider: 'manual',
+        externalId: null,
       })
+      // У ручной сделки external_id равен NULL, а NULL-ы в уникальном индексе
+      // различны — конфликта быть не может. Пустой ответ здесь означал бы
+      // сломанный индекс, а не дубль, поэтому это assert, а не ветка логики.
+      if (!inserted) throw new Error('manual trade cannot conflict: external_id is null')
 
-      if (dto.side === 'buy') {
-        // Комиссия покупки входит в затраты лота — делить её на единицы при
-        // каждом списании не придётся.
-        const cost = quantity.times(price).plus(fee)
-        await tx.lot.create({
-          data: {
-            accountId: dto.accountId,
-            instrumentId: dto.instrumentId,
-            openTradeId: trade.id,
-            qtyOpen: dto.quantity,
-            qtyRemaining: dto.quantity,
-            price: dto.price,
-            costOpen: cost.toString(),
-            costRemaining: cost.toString(),
-            openedAt: executedAt,
-          },
-        })
-        await this.movePosition(tx, dto, quantity, cost, ZERO)
-        return trade
-      }
-
-      const open = await tx.lot.findMany({
-        where: {
-          accountId: dto.accountId,
-          instrumentId: dto.instrumentId,
-          qtyRemaining: { gt: '0' },
-        },
-      })
-      const { consumptions } = consumeFifo(
-        open.map((lot) => ({
-          id: lot.id,
-          qty: Money.of(lot.qtyRemaining.toString()),
-          cost: Money.of(lot.costRemaining.toString()),
-          openedAt: lot.openedAt,
-        })),
-        quantity,
-        price,
-        fee,
-      )
-
-      for (const consumption of consumptions) {
-        await tx.lotConsumption.create({
-          data: {
-            accountId: dto.accountId,
-            lotId: consumption.lotId,
-            tradeId: trade.id,
-            qty: consumption.qty.toString(),
-            cost: consumption.cost.toString(),
-            realizedPnl: consumption.realizedPnl.toString(),
-          },
-        })
-        // Относительное обновление, а не чтение с записью: иначе две продажи
-        // по одному лоту затрут друг друга.
-        await tx.lot.update({
-          where: { id: consumption.lotId },
-          data: {
-            qtyRemaining: { decrement: consumption.qty.toString() },
-            costRemaining: { decrement: consumption.cost.toString() },
-          },
-        })
-      }
-
-      const soldCost = consumptions.reduce((acc, c) => acc.plus(c.cost), ZERO)
-      const realized = consumptions.reduce((acc, c) => acc.plus(c.realizedPnl), ZERO)
-      await this.movePosition(tx, dto, ZERO.minus(quantity), ZERO.minus(soldCost), realized)
-      return trade
+      // Контроллер отдаёт модель целиком, а вставка возвращает только id:
+      // $queryRaw принёс бы колонки в snake_case и сломал бы форму ответа.
+      return tx.trade.findUniqueOrThrow({ where: { id: inserted.id } })
     })
 
     // После транзакции, а не внутри: ошибка матчинга не должна отменять
@@ -124,12 +56,116 @@ export class TradesService {
     return applied
   }
 
+  // Принимает готовую транзакцию: импорт применяет весь отчёт одной, ручной
+  // ввод — своей. Всё внутри — сделка, лоты, позиция — обязано измениться
+  // вместе, иначе сумма остатков лотов разойдётся с позицией.
+  //
+  // Возвращает null, если такая сделка уже есть: тогда ни лоты, ни позиция не
+  // двигаются. Матчинг остаётся на вызывающем — он идёт после коммита.
+  async applyWithin(
+    tx: Prisma.TransactionClient,
+    account: TradeAccount,
+    input: ApplyInput,
+  ): Promise<{ id: string } | null> {
+    const quantity = Money.of(input.quantity)
+    if (quantity.eq(ZERO)) throw new BadRequestException('quantity must be positive')
+    const price = Money.of(input.price)
+    const fee = Money.of(input.fee)
+    const executedAt = new Date(input.executedAt)
+
+    // ON CONFLICT DO NOTHING RETURNING, а не create: у импорта повторная
+    // заливка — штатный случай, а create на конфликте бросает. Ноль
+    // вернувшихся строк и означает «эта сделка уже импортирована».
+    const inserted = await tx.$queryRaw<{ id: string }[]>`
+      insert into trades
+        (account_id, instrument_id, side, quantity, price,
+         fee, fee_currency, executed_at, provider, external_id)
+      values (
+        ${input.accountId}::uuid, ${input.instrumentId}::uuid, ${input.side},
+        ${input.quantity}::numeric, ${input.price}::numeric,
+        ${input.fee}::numeric, ${account.baseCurrency}, ${executedAt},
+        ${input.provider}, ${input.externalId}
+      )
+      on conflict (account_id, provider, external_id) do nothing
+      returning id
+    `
+    const trade = inserted[0]
+    if (!trade) return null
+
+    if (input.side === 'buy') {
+      // Комиссия покупки входит в затраты лота — делить её на единицы при
+      // каждом списании не придётся.
+      const cost = quantity.times(price).plus(fee)
+      await tx.lot.create({
+        data: {
+          accountId: input.accountId,
+          instrumentId: input.instrumentId,
+          openTradeId: trade.id,
+          qtyOpen: input.quantity,
+          qtyRemaining: input.quantity,
+          price: input.price,
+          costOpen: cost.toString(),
+          costRemaining: cost.toString(),
+          openedAt: executedAt,
+        },
+      })
+      await this.movePosition(tx, input, quantity, cost, ZERO)
+      return trade
+    }
+
+    const open = await tx.lot.findMany({
+      where: {
+        accountId: input.accountId,
+        instrumentId: input.instrumentId,
+        qtyRemaining: { gt: '0' },
+      },
+    })
+    const { consumptions } = consumeFifo(
+      open.map((lot) => ({
+        id: lot.id,
+        qty: Money.of(lot.qtyRemaining.toString()),
+        cost: Money.of(lot.costRemaining.toString()),
+        openedAt: lot.openedAt,
+      })),
+      quantity,
+      price,
+      fee,
+    )
+
+    for (const consumption of consumptions) {
+      await tx.lotConsumption.create({
+        data: {
+          accountId: input.accountId,
+          lotId: consumption.lotId,
+          tradeId: trade.id,
+          qty: consumption.qty.toString(),
+          cost: consumption.cost.toString(),
+          realizedPnl: consumption.realizedPnl.toString(),
+        },
+      })
+      // Относительное обновление, а не чтение с записью: иначе две продажи
+      // по одному лоту затрут друг друга.
+      await tx.lot.update({
+        where: { id: consumption.lotId },
+        data: {
+          qtyRemaining: { decrement: consumption.qty.toString() },
+          costRemaining: { decrement: consumption.cost.toString() },
+        },
+      })
+    }
+
+    const soldCost = consumptions.reduce((acc, c) => acc.plus(c.cost), ZERO)
+    const realized = consumptions.reduce((acc, c) => acc.plus(c.realizedPnl), ZERO)
+    await this.movePosition(tx, input, ZERO.minus(quantity), ZERO.minus(soldCost), realized)
+    return trade
+  }
+
   // Одним оператором с ON CONFLICT: «сначала SELECT, потом INSERT» здесь даёт
   // гонку двух первых сделок по одному инструменту. Прибавляются дельты, а не
   // подставляются итоги, поэтому порядок применения не важен.
   private movePosition(
     tx: Prisma.TransactionClient,
-    dto: ApplyTrade,
+    input: Pick<ApplyInput, 'accountId' | 'instrumentId'>,
     quantity: Money,
     cost: Money,
     realized: Money,
@@ -138,7 +174,7 @@ export class TradesService {
       insert into positions
         (account_id, instrument_id, quantity, cost_basis_total, realized_pnl, updated_at)
       values (
-        ${dto.accountId}::uuid, ${dto.instrumentId}::uuid,
+        ${input.accountId}::uuid, ${input.instrumentId}::uuid,
         ${quantity.toString()}::numeric, ${cost.toString()}::numeric,
         ${realized.toString()}::numeric, now()
       )
