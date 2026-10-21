@@ -7,7 +7,16 @@ import { TradesService } from '../trades/trades.service.ts'
 import { parseSberXlsx } from './parsers/sber-xlsx.ts'
 import type { InstrumentClass, RawOperation } from './parsers/sber-xlsx.ts'
 
-export type ImportResult = { created: number; skipped: number }
+// deferred — продажи, под которые в журнале ещё нет покупок. Не ошибка и не
+// потеря: выгрузка Сбера ограничена годом, поэтому бумага, купленная раньше,
+// в свежий отчёт не попадает физически. Такая продажа ждёт своего отчёта и
+// применится при повторной заливке, когда покупка приедет.
+// quantity — размер самой продажи, missing — чего под неё не хватило. Это
+// разные числа: часть бумаги могла быть куплена внутри периода отчёта, а часть
+// раньше. Человеку нужны оба: первое объясняет, какой сделки нет в журнале,
+// второе — сколько добавить руками, если отчёта за тот год уже не достать.
+export type DeferredSale = { ticker: string; quantity: string; missing: string }
+export type ImportResult = { created: number; skipped: number; deferred: DeferredSale[] }
 
 // Отдельный тип, а не просто ConflictException: проигравший гонку не сделал
 // работы, и в catch его надо отличить от настоящей неудачи импорта — иначе
@@ -128,7 +137,13 @@ export class ApplyImportService {
       // импортной транзакции: внутри она держала бы блокировку на общей
       // таблице весь импорт. Откат оставит инструмент без сделок — безвредно.
       const instrumentIds = await this.resolveInstruments(trades)
-      await this.assertSellsCovered(userId, raw.accountId, account.provider, trades, instrumentIds)
+      const { deferred, postponed } = await this.splitUncoveredSales(
+        userId,
+        raw.accountId,
+        account.provider,
+        trades,
+        instrumentIds,
+      )
 
       const applied: string[] = []
       let created = 0
@@ -150,6 +165,8 @@ export class ApplyImportService {
         if (!lock?.locked) throw new ImportAlreadyRunning()
 
         for (const operation of trades) {
+          if (postponed.has(operation.externalId)) continue
+
           const trade = await this.trades.applyWithin(tx, account, {
             accountId: raw.accountId,
             instrumentId: instrumentOf(instrumentIds, operation.ticker),
@@ -200,7 +217,7 @@ export class ApplyImportService {
       // ошибка не должна откатывать принятый отчёт.
       for (const tradeId of applied) await this.matching.matchTrade(userId, tradeId)
 
-      return { created, skipped }
+      return { created, skipped, deferred }
     } catch (error) {
       // Проигравший гонку ничего не записал, и помечать импорт неудачным
       // нельзя: его как раз применяет победитель.
@@ -233,18 +250,23 @@ export class ApplyImportService {
   }
 
   // Период отчёта может начинаться позже покупок: тогда под продажу нет лотов,
-  // consumeFifo бросит «not enough quantity», и при одной транзакции на отчёт
-  // не применится вообще ничего. Проверяем заранее, чтобы назвать все тикеры
-  // сразу и сказать, сколько именно не хватает, — иначе человеку нечего
-  // делать с ошибкой. Решение и отвергнутые варианты — docs/unknowns.md,
-  // «Продажа, под которую в периоде выгрузки нет покупок».
-  private async assertSellsCovered(
+  // и consumeFifo бросил бы «not enough quantity». У Сбера выгрузка ограничена
+  // годом, поэтому для любого, кто инвестирует дольше года, это штатное
+  // состояние первого импорта, а не сбой.
+  //
+  // Поэтому такие продажи откладываются, а остальное применяется: ронять
+  // тридцать три операции из-за одной — не защита, а помеха. Потеря при этом
+  // не возникает: импорт идемпотентен, и отложенная продажа применится при
+  // повторной заливке, когда покупка приедет из отчёта за прошлый год.
+  // Разбор и отвергнутые варианты — docs/unknowns.md, «Продажа, под которую в
+  // периоде выгрузки нет покупок».
+  private async splitUncoveredSales(
     userId: string,
     accountId: string,
     provider: string,
     trades: TradeOperation[],
     instrumentIds: Map<string, string>,
-  ): Promise<void> {
+  ): Promise<{ deferred: DeferredSale[]; postponed: Set<string> }> {
     const { lots, imported } = await this.prisma.withUser(userId, async (tx) => ({
       lots: await tx.lot.findMany({
         where: { accountId, qtyRemaining: { gt: '0' } },
@@ -266,7 +288,9 @@ export class ApplyImportService {
       held.set(lot.instrumentId, before.plus(Money.of(lot.qtyRemaining.toString())))
     }
 
-    const missing = new Map<string, Money>()
+    const deferred: DeferredSale[] = []
+    const postponed = new Set<string>()
+
     for (const operation of trades) {
       if (seen.has(operation.externalId)) continue
       const instrumentId = instrumentOf(instrumentIds, operation.ticker)
@@ -277,20 +301,22 @@ export class ApplyImportService {
         held.set(instrumentId, before.plus(quantity))
         continue
       }
+      // Продажа, которой не хватает лотов, откладывается целиком, а не
+      // частично: половина продажи — это выдуманная сделка, которой не было.
+      // Остаток при этом не трогаем: следующие продажи той же бумаги считаются
+      // от настоящего остатка, а не от просевшего в минус.
       if (before.lt(quantity)) {
-        const gap = quantity.minus(before)
-        missing.set(operation.ticker, (missing.get(operation.ticker) ?? ZERO).plus(gap))
+        postponed.add(operation.externalId)
+        deferred.push({
+          ticker: operation.ticker,
+          quantity: operation.quantity,
+          missing: quantity.minus(before).toString(),
+        })
+        continue
       }
       held.set(instrumentId, before.minus(quantity))
     }
 
-    if (missing.size === 0) return
-
-    const listed = [...missing].map(([ticker, gap]) => `${ticker} — ${gap.toString()}`).join(', ')
-    throw new BadRequestException(
-      `в отчёте есть продажи без покупок: ${listed}. ` +
-        'Добавьте открывающую покупку вручную — её цену знаете только вы — ' +
-        'или закажите выгрузку с даты открытия счёта и повторите импорт: дубли не появятся.',
-    )
+    return { deferred, postponed }
   }
 }

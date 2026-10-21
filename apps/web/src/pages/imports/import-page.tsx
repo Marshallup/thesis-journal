@@ -7,22 +7,19 @@ import type { LabelledAccount } from '../../shared/ui/account-label.ts'
 
 type Account = LabelledAccount
 type Upload = { importId: string; status: 'pending' | 'duplicate' }
-type Applied = { created: number; skipped: number; duplicate: boolean }
+type DeferredSale = { ticker: string; quantity: string; missing: string }
+type Result = { created: number; skipped: number; deferred: DeferredSale[] }
+type Applied = Result & { duplicate: boolean }
 
 // Отказы бэкенда, которые человек должен понять без чтения логов. 409 приходит
 // без текста — это состояние, а не ошибка формы; у 400 текст есть, и он
 // полезнее любого нашего пересказа.
-function explain(error: unknown): { text: string; fixable: boolean } {
+function explain(error: unknown): string {
   if (error instanceof ApiError && error.status === 409) {
-    return {
-      text: 'Отчёт по этому счёту уже применяется. Подождите и попробуйте снова.',
-      fixable: false,
-    }
+    return 'Отчёт по этому счёту уже применяется. Подождите и попробуйте снова.'
   }
-  if (error instanceof ApiError && error.status === 400) {
-    return { text: error.message, fixable: error.message.includes('без покупок') }
-  }
-  return { text: 'Не получилось. Попробуйте ещё раз.', fixable: false }
+  if (error instanceof ApiError && error.status === 400) return error.message
+  return 'Не получилось. Попробуйте ещё раз.'
 }
 
 export function ImportPage() {
@@ -45,10 +42,7 @@ export function ImportPage() {
       // разбирает. Если разбор упадёт, файл уже лежит на сервере, и повторять
       // придётся только применение.
       const uploaded = await api<Upload>('/imports', { method: 'POST', body: form })
-      const applied = await api<{ created: number; skipped: number }>(
-        `/imports/${uploaded.importId}/apply`,
-        { method: 'POST' },
-      )
+      const applied = await api<Result>(`/imports/${uploaded.importId}/apply`, { method: 'POST' })
       return { ...applied, duplicate: uploaded.status === 'duplicate' }
     },
     onSuccess: async () => {
@@ -82,8 +76,10 @@ export function ImportPage() {
         </Link>
       </header>
       <p className="mt-1 text-sm text-ink-muted">
-        XLSX «Операции» из личного кабинета Сбера. Повторная заливка того же файла безопасна: сделки
-        и движения денег не задваиваются.
+        XLSX «Операции» из личного кабинета Сбера. Выгрузка там ограничена периодом в год, поэтому
+        историю длиннее заливайте по одному отчёту на год, начиная с самого старого: продажа не
+        применится, пока в журнале нет покупки. Повторная заливка того же файла безопасна — сделки и
+        движения денег не задваиваются.
       </p>
 
       <form
@@ -165,6 +161,36 @@ export function ImportPage() {
                   ? 'Новых операций в отчёте не оказалось: всё уже было записано раньше.'
                   : 'Сделки, лоты, позиции и движения денег записаны.'}
             </p>
+            {send.data.deferred.length > 0 ? (
+              // Не ошибка и не потеря: продажа ждёт своей покупки и применится
+              // при повторной заливке. Говорим прямо, иначе человек решит, что
+              // импорт съел сделку.
+              <div className="mt-3 border-t border-rule pt-3">
+                <p>
+                  Отложено до появления покупок:{' '}
+                  <span className="tabular">
+                    {send.data.deferred
+                      .map(
+                        (sale) =>
+                          `${sale.ticker}: продажа ${sale.quantity}, не хватает ${sale.missing}`,
+                      )
+                      .join('; ')}
+                  </span>
+                </p>
+                <p className="mt-1 text-ink-muted">
+                  Часть этих бумаг куплена раньше периода отчёта, и списывать продажу не с чего —
+                  поэтому она отложена целиком, а купленное внутри периода пока числится в портфеле.
+                  Залейте отчёт за тот год — выгрузка Сбера ограничена годом, поэтому отчётов будет
+                  несколько, и начинать надо со старого. Если того года в кабинете уже нет,{' '}
+                  <Link to="/trades/new" className="text-accent">
+                    добавьте открывающую покупку вручную
+                  </Link>
+                  . Потом залейте этот же файл снова — отложенные продажи применятся, дубли не
+                  появятся.
+                </p>
+              </div>
+            ) : null}
+
             <Link to="/" className="mt-2 inline-block text-accent">
               Посмотреть сделки
             </Link>
@@ -173,16 +199,7 @@ export function ImportPage() {
 
         {send.isError ? (
           <div role="alert" className="border-t border-rule pt-3 text-sm text-loss">
-            <p>{explain(send.error).text}</p>
-            {explain(send.error).fixable ? (
-              <p className="mt-1 text-ink-muted">
-                Бумага куплена раньше начала периода отчёта, поэтому лотов под продажу нет.{' '}
-                <Link to="/trades/new" className="text-accent">
-                  Добавьте открывающую покупку
-                </Link>{' '}
-                — её цену знаете только вы — и повторите импорт.
-              </p>
-            ) : null}
+            <p>{explain(send.error)}</p>
           </div>
         ) : null}
       </div>
