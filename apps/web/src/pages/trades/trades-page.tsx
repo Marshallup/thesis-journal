@@ -27,15 +27,27 @@ export function TradesPage() {
     queryFn: () => api<Instrument[]>('/instruments'),
   })
 
+  const accounts = useQuery({
+    queryKey: ['accounts'],
+    queryFn: () => api<{ id: string }[]>('/accounts'),
+  })
+
   const symbols = new Map(instruments.data?.map((item) => [item.id, item.symbol]))
+  const noAccounts = accounts.isSuccess && accounts.data.length === 0
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
       <header className="flex items-baseline justify-between">
         <h1 className="font-serif text-xl">Сделки</h1>
         <div className="flex items-baseline gap-4 text-sm">
+          <Link to="/trades/new" className="text-accent">
+            Записать сделку
+          </Link>
           <Link to="/decisions/new" className="text-accent">
             Записать решение
+          </Link>
+          <Link to="/accounts/new?next=/" className="text-accent">
+            Завести счёт
           </Link>
           <button type="button" onClick={signOut} className="text-accent">
             Выйти
@@ -51,7 +63,14 @@ export function TradesPage() {
         </p>
       ) : null}
 
-      {trades.isSuccess && trades.data.length === 0 ? (
+      {noAccounts ? (
+        <p className="mt-6 text-sm text-ink-muted">
+          Записывать пока некуда: сделка привязывается к счёту.{' '}
+          <Link to="/accounts/new" className="text-accent">
+            Завести счёт
+          </Link>
+        </p>
+      ) : trades.isSuccess && trades.data.length === 0 ? (
         <p className="mt-6 text-sm text-ink-muted">
           Сделок пока нет. Первая появится здесь сразу после записи.
         </p>
