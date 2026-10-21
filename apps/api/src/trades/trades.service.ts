@@ -23,9 +23,15 @@ export class TradesService {
     private readonly matching: MatchingService,
   ) {}
 
-  list(userId: string) {
+  // `linked: false` — сделки без привязанного решения. Фильтр делает база, а не
+  // клиент: после импорта года таких сделок десятки, и возить их все, чтобы
+  // отбросить размеченные, бессмысленно.
+  list(userId: string, options: { linked?: boolean } = {}) {
     return this.prisma.withUser(userId, (tx) =>
-      tx.trade.findMany({ orderBy: { executedAt: 'desc' } }),
+      tx.trade.findMany({
+        where: options.linked === false ? { decisions: { none: {} } } : {},
+        orderBy: { executedAt: 'desc' },
+      }),
     )
   }
 

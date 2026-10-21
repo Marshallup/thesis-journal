@@ -176,3 +176,53 @@ it('неудачная продажа не оставляет ни сделки,
   expect(money(position.quantity)).toBe('1')
   expect(money(position.realizedPnl)).toBe('0')
 })
+
+// Экран разметки просит именно неразмеченные: фильтр делает база.
+it('отдаёт только сделки без привязанного решения', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('unlinked@example.com')
+  const linkedTrade = await service.apply(userId, {
+    accountId,
+    instrumentId,
+    side: 'buy',
+    quantity: '1',
+    price: '100',
+    fee: '0',
+    executedAt: '2026-02-01T10:00:00Z',
+  })
+  await service.apply(userId, {
+    accountId,
+    instrumentId,
+    side: 'buy',
+    quantity: '2',
+    price: '101',
+    fee: '0',
+    executedAt: '2026-02-02T10:00:00Z',
+  })
+  await db.prisma.decisionTrade.create({
+    data: {
+      accountId,
+      tradeId: linkedTrade.id,
+      decisionId: (
+        await db.prisma.decision.create({
+          data: {
+            accountId,
+            instrumentId,
+            side: 'buy',
+            thesis: 'уже размечено',
+            horizonDays: 30,
+            conviction: 3,
+            mood: 'calm',
+            contextSnapshot: {},
+          },
+        })
+      ).id,
+    },
+  })
+
+  const all = await service.list(userId)
+  const unlinked = await service.list(userId, { linked: false })
+
+  expect(all).toHaveLength(2)
+  expect(unlinked.map((trade) => trade.id)).not.toContain(linkedTrade.id)
+  expect(unlinked).toHaveLength(1)
+})

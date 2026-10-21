@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import { PrismaService } from '../db/prisma.service.ts'
 import { ContextSnapshotService } from './context-snapshot.service.ts'
 import type { CreateDecision, ReviseDecision } from './dto.ts'
@@ -11,6 +11,54 @@ export class DecisionsService {
     private readonly matching: MatchingService,
     private readonly snapshots: ContextSnapshotService,
   ) {}
+
+  // Ручная привязка сделок к решению: экран разметки присылает их пачкой.
+  // Автоматическая привязка живёт в MatchingService и работает по окну
+  // горизонта; здесь решает человек, поэтому окно не проверяется — но счёт,
+  // инструмент и направление обязаны совпадать. Привязка сделки к решению по
+  // другой бумаге или в другую сторону — это не свобода выбора, а опечатка.
+  linkTrades(userId: string, decisionId: string, tradeIds: string[]) {
+    return this.prisma.withUser(userId, async (tx) => {
+      // RLS не покажет чужое решение, и findUniqueOrThrow даст 404 вместо
+      // молчаливого нуля привязок.
+      const decision = await tx.decision.findUniqueOrThrow({ where: { id: decisionId } })
+      const trades = await tx.trade.findMany({ where: { id: { in: tradeIds } } })
+
+      const missing = tradeIds.filter((id) => !trades.some((trade) => trade.id === id))
+      if (missing.length > 0)
+        throw new BadRequestException(`сделки не найдены: ${missing.join(', ')}`)
+
+      const foreign = trades.filter(
+        (trade) =>
+          trade.accountId !== decision.accountId ||
+          trade.instrumentId !== decision.instrumentId ||
+          trade.side !== decision.side,
+      )
+      if (foreign.length > 0) {
+        throw new BadRequestException(
+          `сделки не подходят решению по счёту, инструменту или направлению: ${foreign
+            .map((trade) => trade.id)
+            .join(', ')}`,
+        )
+      }
+
+      let linked = 0
+      let skipped = 0
+      for (const trade of trades) {
+        // ON CONFLICT по уникальному (trade_id): одна сделка исполняет одно
+        // решение. Повторная привязка — не ошибка, а «уже привязана».
+        const inserted = await tx.$queryRaw<{ id: string }[]>`
+          insert into decision_trades (account_id, decision_id, trade_id)
+          values (${decision.accountId}::uuid, ${decisionId}::uuid, ${trade.id}::uuid)
+          on conflict (trade_id) do nothing
+          returning id
+        `
+        if (inserted[0]) linked += 1
+        else skipped += 1
+      }
+      return { linked, skipped }
+    })
+  }
 
   async create(userId: string, dto: CreateDecision) {
     // Снимок делает сервер в момент записи, а не клиент: иначе его можно
@@ -32,6 +80,7 @@ export class DecisionsService {
           horizonDays: dto.horizonDays,
           conviction: dto.conviction,
           mood: dto.mood,
+          postFactum: dto.postFactum ?? false,
           invalidator: dto.invalidator ?? null,
           tags: dto.tags ?? [],
           freeText: dto.freeText ?? null,
