@@ -14,17 +14,25 @@ export class InstrumentsService {
     return this.prisma.instrument.findMany({ orderBy: { symbol: 'asc' } })
   }
 
-  // Через upsert по паре (symbol, class), а не «сначала найти, потом создать»:
-  // два пользователя могут добавить один тикер одновременно, и проигравший
-  // получил бы нарушение уникальности вместо существующего инструмента.
-  create(dto: CreateInstrument): Promise<Prisma.InstrumentModel> {
+  // Вставка с ON CONFLICT DO NOTHING, а не upsert: у Prisma upsert здесь
+  // разворачивается в чтение и запись двумя запросами, и два параллельных
+  // импорта одного тикера ловят нарушение уникальности. Это не теория —
+  // гоночный тест воспроизводит отказ три раза из трёх, разбор в
+  // docs/incidents.md за 21.10.2026.
+  //
+  // Чтение идёт после вставки и возвращает чужую строку, если тикер успел
+  // появиться: нам нужен инструмент, а не авторство.
+  async create(dto: CreateInstrument): Promise<Prisma.InstrumentModel> {
     // Нормализация повторяется здесь: сервис зовут и из теста, минуя Zod.
     const { symbol, class: klass, currency } = createInstrumentSchema.parse(dto)
 
-    return this.prisma.instrument.upsert({
+    await this.prisma.$executeRaw`
+      insert into instruments (symbol, class, currency)
+      values (${symbol}, ${klass}, ${currency})
+      on conflict (symbol, class) do nothing
+    `
+    return this.prisma.instrument.findUniqueOrThrow({
       where: { symbol_class: { symbol, class: klass } },
-      create: { symbol, class: klass, currency },
-      update: {},
     })
   }
 }
