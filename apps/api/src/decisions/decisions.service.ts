@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../db/prisma.service.ts'
+import { ContextSnapshotService } from './context-snapshot.service.ts'
 import type { CreateDecision, ReviseDecision } from './dto.ts'
 import { MatchingService } from './matching.service.ts'
 
@@ -8,9 +9,14 @@ export class DecisionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly matching: MatchingService,
+    private readonly snapshots: ContextSnapshotService,
   ) {}
 
   async create(userId: string, dto: CreateDecision) {
+    // Снимок делает сервер в момент записи, а не клиент: иначе его можно
+    // подделать, а он нужен именно как неподменяемый контекст решения.
+    const context = await this.snapshots.build(userId, dto.accountId, dto.instrumentId, new Date())
+
     const decision = await this.prisma.withUser(userId, async (tx) => {
       // Явный фильтр по userId, RLS под ним — второй рубеж. Заодно проверка
       // владения счётом: чужой не найдётся.
@@ -29,6 +35,7 @@ export class DecisionsService {
           invalidator: dto.invalidator ?? null,
           tags: dto.tags ?? [],
           freeText: dto.freeText ?? null,
+          contextSnapshot: context,
         },
       })
     })

@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config'
 import { APP_PIPE } from '@nestjs/core'
 import cookieParser from 'cookie-parser'
 import { LoggerModule } from 'nestjs-pino'
+import { AccountsModule } from './accounts/accounts.module.ts'
 import { AuthModule } from './auth/auth.module.ts'
 import { envSchema } from './config/env.ts'
 import type { Env } from './config/env.ts'
@@ -60,6 +61,7 @@ import { TradesModule } from './trades/trades.module.ts'
     TradesModule,
     DecisionsModule,
     InstrumentsModule,
+    AccountsModule,
   ],
   // Через APP_PIPE, а не useGlobalPipes в main.ts: иначе валидация не включится
   // в тестах, где приложение собирается через Test.createTestingModule.
