@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common'
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common'
 import { UseGuards } from '@nestjs/common'
 import { AuthGuard } from '@nestjs/passport'
 import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger'
 import { z } from 'zod'
 import { CurrentUser } from '../auth/current-user.decorator.ts'
 import type { AuthenticatedUser } from '../auth/current-user.decorator.ts'
+import type { ContextSnapshot } from './context-snapshot.service.ts'
+import { ContextSnapshotService } from './context-snapshot.service.ts'
 import { DecisionsService } from './decisions.service.ts'
 import { createDecisionOpenApiSchema, createDecisionSchema, reviseDecisionSchema } from './dto.ts'
 import type { CreateDecision, ReviseDecision } from './dto.ts'
@@ -17,12 +19,27 @@ type ApiBodySchema = Extract<Parameters<typeof ApiBody>[0], { schema: unknown }>
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class DecisionsController {
-  constructor(private readonly decisions: DecisionsService) {}
+  constructor(
+    private readonly decisions: DecisionsService,
+    private readonly snapshots: ContextSnapshotService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Решения пользователя вместе с историей ревизий' })
   list(@CurrentUser() user: AuthenticatedUser) {
     return this.decisions.list(user.userId)
+  }
+
+  // Форма показывает снимок до отправки, но прислать его не может: при записи
+  // сервер считает собственный, и этот — только предпросмотр.
+  @Get('context')
+  @ApiOperation({ summary: 'Предпросмотр снимка контекста для формы' })
+  context(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('accountId', { schema: z.uuid() }) accountId: string,
+    @Query('instrumentId', { schema: z.uuid() }) instrumentId: string,
+  ): Promise<ContextSnapshot> {
+    return this.snapshots.build(user.userId, accountId, instrumentId, new Date())
   }
 
   @Post()

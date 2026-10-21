@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { useSession } from '../../shared/api/session.tsx'
 import { formatMoscowTime } from '../../shared/ui/format.ts'
@@ -32,9 +33,14 @@ export function TradesPage() {
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
       <header className="flex items-baseline justify-between">
         <h1 className="font-serif text-xl">Сделки</h1>
-        <button type="button" onClick={signOut} className="text-sm text-accent">
-          Выйти
-        </button>
+        <div className="flex items-baseline gap-4 text-sm">
+          <Link to="/decisions/new" className="text-accent">
+            Записать решение
+          </Link>
+          <button type="button" onClick={signOut} className="text-accent">
+            Выйти
+          </button>
+        </div>
       </header>
 
       {trades.isPending ? <p className="mt-6 text-sm text-ink-muted">Загружаем</p> : null}
