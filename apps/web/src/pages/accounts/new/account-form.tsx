@@ -1,0 +1,112 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router'
+import { api } from '../../../shared/api/client.ts'
+
+type Account = { id: string }
+
+// Подписи человеческие, значения — те, что проверяет база. Вид счёта форма не
+// спрашивает и не считает: его выводит сервер из провайдера.
+const PROVIDERS = [
+  { value: 'manual', label: 'без брокера, записываю руками' },
+  { value: 'sber', label: 'Сбер' },
+  { value: 'tinvest', label: 'Т-Инвестиции' },
+  { value: 'bybit', label: 'Bybit' },
+  { value: 'bitget', label: 'Bitget' },
+] as const
+
+export function AccountForm() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  // Возвращаемся туда, откуда пришли: счёт заводят по ходу записи, а не
+  // отдельным походом в настройки.
+  const [params] = useSearchParams()
+  const next = params.get('next') ?? '/trades/new'
+
+  const [provider, setProvider] = useState<string>('manual')
+  const [baseCurrency, setBaseCurrency] = useState('RUB')
+  const [isIis, setIsIis] = useState(false)
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<Account>('/accounts', {
+        method: 'POST',
+        body: JSON.stringify({ provider, baseCurrency, isIis }),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      void navigate(next)
+    },
+  })
+
+  return (
+    <main className="mx-auto w-full max-w-xl px-4 py-8">
+      <h1 className="font-serif text-xl">Куда записываем</h1>
+      <p className="mt-1 text-sm text-ink-muted">
+        Сделки и решения привязываются к счёту. Если брокера нет, подойдёт ручной — его можно
+        завести прямо сейчас и уточнить позже.
+      </p>
+
+      <form
+        className="mt-8 flex flex-col gap-5"
+        onSubmit={(event) => {
+          event.preventDefault()
+          save.mutate()
+        }}
+      >
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-ink-muted">Где счёт</span>
+          <select
+            value={provider}
+            onChange={(event) => setProvider(event.target.value)}
+            className="rounded-sm border border-rule bg-surface px-2 py-1.5"
+          >
+            {PROVIDERS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm text-ink-muted">Базовая валюта</span>
+          <input
+            value={baseCurrency}
+            onChange={(event) => setBaseCurrency(event.target.value.toUpperCase())}
+            required
+            minLength={3}
+            maxLength={3}
+            className="tabular w-24 rounded-sm border border-rule bg-surface px-2 py-1.5"
+          />
+        </label>
+
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={isIis}
+            onChange={(event) => setIsIis(event.target.checked)}
+          />
+          <span className="text-sm">
+            ИИС
+            <span className="text-ink-muted"> — свой горизонт и налоговый режим</span>
+          </span>
+        </label>
+
+        {save.isError ? (
+          <p role="alert" className="text-sm text-loss">
+            Не удалось завести счёт.
+          </p>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={save.isPending}
+          className="self-start rounded-sm bg-accent px-3 py-1.5 text-paper disabled:opacity-60"
+        >
+          {save.isPending ? 'Заводим' : 'Завести счёт'}
+        </button>
+      </form>
+    </main>
+  )
+}

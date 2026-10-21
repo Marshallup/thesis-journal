@@ -1,23 +1,33 @@
-import { Controller, Get, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common'
 import { AuthGuard } from '@nestjs/passport'
-import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
+import { ApiBearerAuth, ApiBody, ApiOperation } from '@nestjs/swagger'
 import type { Prisma } from '@thesis/db'
-import { PrismaService } from '../db/prisma.service.ts'
+import { createInstrumentOpenApiSchema, createInstrumentSchema } from './dto.ts'
+import type { CreateInstrument } from './dto.ts'
+import { InstrumentsService } from './instruments.service.ts'
 
-// Справочник общий для всех пользователей, политик RLS на нём нет, поэтому
-// withUser здесь не нужен. Владельцем таблицы по design.md:74 станет ingestor —
-// тогда этот маршрут уедет туда, а веб будет ходить через API сервиса.
+type ApiBodySchema = Extract<Parameters<typeof ApiBody>[0], { schema: unknown }>['schema']
+
+// Справочник общий, владельцем таблицы по design.md:74 станет ingestor — тогда
+// эти маршруты уедут туда, а веб будет ходить через API сервиса.
 @Controller('instruments')
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class InstrumentsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly instruments: InstrumentsService) {}
 
   @Get()
   @ApiOperation({ summary: 'Справочник инструментов' })
-  // Тип выписан явно: выведенный ссылается на внутренние файлы генерата
-  // Prisma, и TypeScript справедливо считает такой тип непортабельным (TS2883).
   list(): Promise<Prisma.InstrumentModel[]> {
-    return this.prisma.instrument.findMany({ orderBy: { symbol: 'asc' } })
+    return this.instruments.list()
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Добавить инструмент. Повтор отдаёт существующий' })
+  @ApiBody({ schema: createInstrumentOpenApiSchema as ApiBodySchema })
+  create(
+    @Body({ schema: createInstrumentSchema }) body: CreateInstrument,
+  ): Promise<Prisma.InstrumentModel> {
+    return this.instruments.create(body)
   }
 }

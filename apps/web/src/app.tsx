@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from 'react-router'
+import { AccountForm } from './pages/accounts/new/account-form.tsx'
 import { DecisionForm } from './pages/decision-new/decision-form.tsx'
 import { LoginPage } from './pages/login/login-page.tsx'
+import { TradeForm } from './pages/trades/new/trade-form.tsx'
 import { TradesPage } from './pages/trades/trades-page.tsx'
 import { useSession } from './shared/api/session.tsx'
 
@@ -20,6 +22,14 @@ export function App() {
       <Route
         path="/"
         element={state === 'authenticated' ? <TradesPage /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/accounts/new"
+        element={state === 'authenticated' ? <AccountForm /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/trades/new"
+        element={state === 'authenticated' ? <TradeForm /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/decisions/new"
