@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 
 type Account = { id: string; provider: string; kind: string; baseCurrency: string; isIis: boolean }
@@ -93,7 +93,12 @@ export function DecisionForm() {
       >
         <div className="flex gap-4">
           <label className="flex flex-1 flex-col gap-1">
-            <span className="text-sm text-ink-muted">Счёт</span>
+            <span className="flex items-baseline justify-between text-sm text-ink-muted">
+              Счёт
+              <Link to="/accounts/new?next=/decisions/new" className="text-accent">
+                добавить
+              </Link>
+            </span>
             <select
               value={accountId}
               onChange={(event) => setAccountId(event.target.value)}
