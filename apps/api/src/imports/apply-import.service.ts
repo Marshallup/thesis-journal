@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common'
 import { Money } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
 import { MatchingService } from '../decisions/matching.service.ts'
@@ -8,6 +8,15 @@ import { parseSberXlsx } from './parsers/sber-xlsx.ts'
 import type { InstrumentClass, RawOperation } from './parsers/sber-xlsx.ts'
 
 export type ImportResult = { created: number; skipped: number }
+
+// Отдельный тип, а не просто ConflictException: проигравший гонку не сделал
+// работы, и в catch его надо отличить от настоящей неудачи импорта — иначе
+// отчёт победителя пометится как провалившийся.
+export class ImportAlreadyRunning extends ConflictException {
+  constructor() {
+    super({ status: 'already_running' })
+  }
+}
 
 const ZERO = Money.of('0')
 
@@ -126,6 +135,20 @@ export class ApplyImportService {
       let skipped = 0
 
       await this.prisma.withUser(userId, async (tx) => {
+        // `try`, а не блокирующий `pg_advisory_xact_lock`: второй импорт должен
+        // получить отказ сразу, а не встать в очередь и повторить работу,
+        // которую уже делает первый. Блокировка транзакционная — снимается
+        // на коммите или откате сама, освободить её вручную невозможно забыть.
+        //
+        // Ключ — счёт, а не импорт: два разных отчёта по одному счёту
+        // одновременно опасны так же, у них пересекаются лоты и позиции.
+        // `hashtext` даёт int4, и коллизия двух счётов обойдётся лишним
+        // отказом, а не потерянными данными.
+        const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
+          select pg_try_advisory_xact_lock(hashtext(${`import:${raw.accountId}`})) as locked
+        `
+        if (!lock?.locked) throw new ImportAlreadyRunning()
+
         for (const operation of trades) {
           const trade = await this.trades.applyWithin(tx, account, {
             accountId: raw.accountId,
@@ -179,6 +202,10 @@ export class ApplyImportService {
 
       return { created, skipped }
     } catch (error) {
+      // Проигравший гонку ничего не записал, и помечать импорт неудачным
+      // нельзя: его как раз применяет победитель.
+      if (error instanceof ImportAlreadyRunning) throw error
+
       // Своей транзакцией: импортная уже откачена, и вместе с ней откатилась
       // бы отметка о неудаче.
       await this.prisma.withUser(userId, (tx) =>

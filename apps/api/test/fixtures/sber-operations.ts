@@ -118,6 +118,8 @@ const TRADES: Row[] = [
   trade('77001', '2026-08-03 10:15:04', 'SBER', 'Покупка', '10', '250.5', '2505'),
 ]
 
+const EXTRA_DEPOSIT = cash('2026-10-07 09:00:00', 'Пополнение счёта', '', '250')
+
 const CASH: Row[] = [
   // Два пополнения с совпадающей секундой — вырожденный случай, на котором
   // хеш без occurrence склеил бы их в одну операцию.
@@ -139,6 +141,10 @@ export type SberFixtureOptions = {
   // Добавить продажу тикера, покупок которого в отчёте нет: так выглядит
   // выгрузка за период, начавшийся позже покупки.
   uncoveredSell?: boolean
+  // Ещё одно пополнение. Нужно, когда требуется второй отчёт по тому же счёту:
+  // байтово иной, иначе заливка вернёт тот же импорт по хешу содержимого, —
+  // но такой же валидный.
+  extraDeposit?: boolean
 }
 
 export function buildSberOperationsXlsx(options: SberFixtureOptions = {}): Promise<Buffer> {
@@ -156,7 +162,10 @@ export function buildSberOperationsXlsx(options: SberFixtureOptions = {}): Promi
   return writeXlsxFile([
     { sheet: 'Заявки', data: [header(['Номер договора', 'Номер заявки'])] },
     { sheet: 'Сделки', data: [header(TRADES_HEADER), ...trades] },
-    { sheet: 'Движение ДС', data: [header(CASH_HEADER), ...CASH] },
+    {
+      sheet: 'Движение ДС',
+      data: [header(CASH_HEADER), ...(options.extraDeposit ? [EXTRA_DEPOSIT] : []), ...CASH],
+    },
     { sheet: 'Движение ЦБ', data: [header(['Номер договора', 'Дата подачи поручения'])] },
   ]).toBuffer()
 }
