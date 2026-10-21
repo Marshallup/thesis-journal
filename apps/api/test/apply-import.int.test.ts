@@ -136,31 +136,7 @@ it('продажа без покупок останавливает импорт
   expect(raw.error).toMatch(/GMKN/)
 })
 
-// Гоночный тест обязателен для всего, что двигает деньги
-// (.claude/rules/tests.md). Формулировка «успешна ровно одна» тут не подходит:
-// импорт идемпотентен, и обе попытки обязаны завершиться — одна создаёт,
-// вторая пропускает. Проверяется, что деньги и сделки не задвоились.
-//
-// До правки InstrumentsService этот тест падал три раза из трёх: вторая
-// попытка отваливалась на upsert инструмента. Разбор — docs/incidents.md.
-it('два одновременных импорта одного отчёта не задваивают сделки', async () => {
-  const { userId, accountId } = await seedAccount('race@example.com')
-  const importId = await uploadFixture(userId, accountId)
-
-  const outcomes = await Promise.allSettled([
-    service.run(userId, importId),
-    service.run(userId, importId),
-  ])
-
-  const created = outcomes.flatMap((outcome) =>
-    outcome.status === 'fulfilled' ? [outcome.value.created] : [],
-  )
-  expect(created.toSorted((a, b) => a - b)).toEqual([0, 9])
-
-  const { trades, ledger } = await prisma.withUser(userId, async (tx) => ({
-    trades: await tx.trade.findMany({ where: { accountId } }),
-    ledger: await tx.cashLedger.findMany({ where: { accountId } }),
-  }))
-  expect(trades).toHaveLength(4)
-  expect(ledger).toHaveLength(5)
-})
+// Гоночный тест переехал в import-concurrency.int.test.ts: с появлением
+// advisory lock (задача 17) второй одновременный импорт получает отказ, а не
+// доезжает с нулём созданных, и проверять это правильнее там же, где живёт
+// сама блокировка.
