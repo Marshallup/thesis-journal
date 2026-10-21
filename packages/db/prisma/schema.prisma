@@ -275,6 +275,35 @@ model CashLedger {
   @@map("cash_ledger")
 }
 
+model DeferredOperation {
+  id        String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+  // Импорт, из которого операция приехала: его же и переприменяют, когда
+  // покупка появилась. Связь настоящая — обе таблицы в схеме core.
+  importId  String    @map("import_id") @db.Uuid
+  rawImport RawImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  instrumentId String @map("instrument_id") @db.Uuid
+  // Номер сделки из отчёта. Он же ключ идемпотентности сделки, когда она
+  // наконец применится.
+  externalId   String @map("external_id")
+  side         String // пока только sell: отложить покупку нечем
+
+  // Размер самой продажи и чего под неё не хватило — разные числа: часть бумаги
+  // могла быть куплена внутри периода отчёта, а часть раньше.
+  quantity   Decimal  @db.Decimal(38, 18)
+  missing    Decimal  @db.Decimal(38, 18)
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Состояние, а не событие: строка живёт, пока операцию нельзя применить.
+  // Каждый прогон импорта пересчитывает набор целиком, поэтому ключ — импорт
+  // плюс номер сделки.
+  @@unique([importId, externalId], name: "deferred_operation_identity", map: "deferred_operation_identity")
+  @@index([accountId, instrumentId])
+  @@map("deferred_operations")
+}
+
 model RawImport {
   id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String   @map("account_id") @db.Uuid
@@ -286,6 +315,8 @@ model RawImport {
   status    String // pending | parsed | failed
   error     String?
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  deferred DeferredOperation[]
 
   @@unique([accountId, fileHash], name: "raw_import_idempotency", map: "raw_import_idempotency")
   @@map("raw_imports")

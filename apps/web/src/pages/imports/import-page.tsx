@@ -2,10 +2,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useId, useState } from 'react'
 import { Link } from 'react-router'
 import { ApiError, api } from '../../shared/api/client.ts'
+import { formatMoscowTime } from '../../shared/ui/format.ts'
+import { Money } from '../../shared/ui/money.tsx'
 import { accountLabel } from '../../shared/ui/account-label.ts'
 import type { LabelledAccount } from '../../shared/ui/account-label.ts'
 
 type Account = LabelledAccount
+type Instrument = { id: string; symbol: string }
+type Pending = {
+  id: string
+  importId: string
+  instrumentId: string
+  quantity: string
+  missing: string
+  occurredAt: string
+}
 type Upload = { importId: string; status: 'pending' | 'duplicate' }
 type DeferredSale = { ticker: string; quantity: string; missing: string }
 type Result = { created: number; skipped: number; deferred: DeferredSale[] }
@@ -27,6 +38,14 @@ export function ImportPage() {
   const fileInputId = useId()
 
   const accounts = useQuery({ queryKey: ['accounts'], queryFn: () => api<Account[]>('/accounts') })
+  const pending = useQuery({
+    queryKey: ['imports', 'deferred'],
+    queryFn: () => api<Pending[]>('/imports/deferred'),
+  })
+  const instruments = useQuery({
+    queryKey: ['instruments'],
+    queryFn: () => api<Instrument[]>('/instruments'),
+  })
   const [accountId, setAccountId] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -47,8 +66,26 @@ export function ImportPage() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['trades'] })
+      await queryClient.invalidateQueries({ queryKey: ['imports', 'deferred'] })
     },
   })
+
+  // Повторное применение уже залитого отчёта: файл лежит на сервере, и
+  // загружать его второй раз незачем — именно этого не хватало, когда
+  // отложенная продажа ждала покупки.
+  const reapply = useMutation({
+    mutationFn: (importId: string) => api<Result>(`/imports/${importId}/apply`, { method: 'POST' }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['trades'] })
+      await queryClient.invalidateQueries({ queryKey: ['imports', 'deferred'] })
+    },
+  })
+
+  const symbols = new Map(instruments.data?.map((item) => [item.id, item.symbol]))
+  const byImport = new Map<string, Pending[]>()
+  for (const operation of pending.data ?? []) {
+    byImport.set(operation.importId, [...(byImport.get(operation.importId) ?? []), operation])
+  }
 
   const sberAccounts = accounts.data?.filter((account) => account.provider === 'sber') ?? []
 
@@ -203,6 +240,72 @@ export function ImportPage() {
           </div>
         ) : null}
       </div>
+
+      {byImport.size > 0 ? (
+        <section className="mt-10">
+          <h2 className="font-serif text-lg">Ждут покупок</h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            Эти продажи не применены: под них нет лотов. Залейте отчёт за год, в котором бумага
+            покупалась, или добавьте открывающую покупку вручную — и примените отчёт ещё раз.
+            Загружать файл заново не нужно, он уже на сервере.
+          </p>
+
+          {[...byImport].map(([importId, operations]) => (
+            <div key={importId} className="mt-4 border-t border-rule pt-3">
+              <table className="w-full border-collapse text-sm">
+                <tbody>
+                  {operations.map((operation) => (
+                    <tr key={operation.id} className="border-b border-rule">
+                      <td className="h-8 tabular">{formatMoscowTime(operation.occurredAt)}</td>
+                      <td className="h-8">{symbols.get(operation.instrumentId) ?? '—'}</td>
+                      <td className="h-8">продажа</td>
+                      <td className="h-8 text-right">
+                        <Money
+                          value={operation.quantity}
+                          fractionDigits={0}
+                          maxFractionDigits={18}
+                        />
+                      </td>
+                      <td className="h-8 text-right text-ink-muted">
+                        не хватает{' '}
+                        <Money
+                          value={operation.missing}
+                          fractionDigits={0}
+                          maxFractionDigits={18}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button
+                type="button"
+                onClick={() => reapply.mutate(importId)}
+                disabled={reapply.isPending}
+                className="mt-2 rounded-sm border border-rule px-3 py-1.5 text-sm disabled:text-ink-muted"
+              >
+                {reapply.isPending ? 'Применяем' : 'Применить ещё раз'}
+              </button>
+            </div>
+          ))}
+
+          <div aria-live="polite" className="mt-3 text-sm">
+            {reapply.isSuccess ? (
+              <p className="tabular">
+                Создано {reapply.data.created}, пропущено {reapply.data.skipped}
+                {reapply.data.deferred.length > 0
+                  ? ', часть по-прежнему ждёт покупок'
+                  : ', отложенного больше нет'}
+              </p>
+            ) : null}
+            {reapply.isError ? (
+              <p role="alert" className="text-loss">
+                {explain(reapply.error)}
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
     </main>
   )
 }

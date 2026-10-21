@@ -146,6 +146,33 @@ it('откладывает продажу без покупок, а осталь
   expect(raw.status).toBe('parsed')
 })
 
+// Отложенное переживает ответ на запрос: экран показывает его и через час.
+it('сохраняет отложенные операции и убирает их после применения', async () => {
+  const { userId, accountId } = await seedAccount('pending@example.com')
+  const importId = await uploadFixture(userId, accountId, { uncoveredSell: true })
+  await service.run(userId, importId)
+
+  const stored = await service.pending(userId)
+  expect(stored).toHaveLength(1)
+  expect(stored[0]).toMatchObject({ externalId: '77006', side: 'sell', importId })
+  expect(stored[0]?.missing.toString()).toBe('4')
+
+  // Покупка приехала — отложенное применяется и перестаёт числиться.
+  const instrument = await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'GMKN' } })
+  await tradesService.apply(userId, {
+    accountId,
+    instrumentId: instrument.id,
+    side: 'buy',
+    quantity: '4',
+    price: '120',
+    fee: '0',
+    executedAt: '2026-07-01T10:00:00Z',
+  })
+  await service.run(userId, importId)
+
+  expect(await service.pending(userId)).toEqual([])
+})
+
 // Главное свойство отложенной продажи: она не потеряна. Появилась покупка —
 // повторная заливка того же файла применяет её, и ничего не задваивается.
 it('применяет отложенную продажу, когда покупка появилась', async () => {

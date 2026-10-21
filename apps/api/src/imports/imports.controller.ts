@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpCode,
   Param,
   Post,
@@ -52,6 +53,14 @@ export class ImportsController {
     // уже существующий импорт, и честный код для него 200.
     response.status(result.status === 'duplicate' ? 200 : 201)
     return result
+  }
+
+  // Отдельный список, а не часть ответа на применение: про отложенное надо
+  // помнить и после того, как человек ушёл с экрана.
+  @Get('deferred')
+  @ApiOperation({ summary: 'Операции, ждущие покупок: продажи без лотов' })
+  deferred(@CurrentUser() user: AuthenticatedUser) {
+    return this.apply.pending(user.userId)
   }
 
   // Применение отдельным запросом, а не внутри заливки: сохранённый отчёт

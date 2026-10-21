@@ -16,6 +16,14 @@ import type { InstrumentClass, RawOperation } from './parsers/sber-xlsx.ts'
 // раньше. Человеку нужны оба: первое объясняет, какой сделки нет в журнале,
 // второе — сколько добавить руками, если отчёта за тот год уже не достать.
 export type DeferredSale = { ticker: string; quantity: string; missing: string }
+
+// То же самое, но с полями, которые нужны строке в базе: инструмент вместо
+// тикера и время операции, чтобы список можно было показать по-человечески.
+type DeferredRow = DeferredSale & {
+  instrumentId: string
+  externalId: string
+  occurredAt: string
+}
 export type ImportResult = { created: number; skipped: number; deferred: DeferredSale[] }
 
 // Отдельный тип, а не просто ConflictException: проигравший гонку не сделал
@@ -207,6 +215,25 @@ export class ApplyImportService {
           else skipped += 1
         }
 
+        // Набор пересчитывается целиком на каждом прогоне: отложенное — это
+        // состояние, а не журнал. Применилось — строка исчезает, появилась
+        // новая непокрытая продажа — появляется.
+        await tx.deferredOperation.deleteMany({ where: { importId } })
+        if (deferred.length > 0) {
+          await tx.deferredOperation.createMany({
+            data: deferred.map((sale) => ({
+              accountId: raw.accountId,
+              importId,
+              instrumentId: sale.instrumentId,
+              externalId: sale.externalId,
+              side: 'sell',
+              quantity: sale.quantity,
+              missing: sale.missing,
+              occurredAt: new Date(sale.occurredAt),
+            })),
+          })
+        }
+
         await tx.rawImport.update({
           where: { id: importId },
           data: { status: 'parsed', error: null },
@@ -217,7 +244,11 @@ export class ApplyImportService {
       // ошибка не должна откатывать принятый отчёт.
       for (const tradeId of applied) await this.matching.matchTrade(userId, tradeId)
 
-      return { created, skipped, deferred }
+      return {
+        created,
+        skipped,
+        deferred: deferred.map(({ ticker, quantity, missing }) => ({ ticker, quantity, missing })),
+      }
     } catch (error) {
       // Проигравший гонку ничего не записал, и помечать импорт неудачным
       // нельзя: его как раз применяет победитель.
@@ -233,6 +264,15 @@ export class ApplyImportService {
       )
       throw error
     }
+  }
+
+  // Экран импорта показывает это списком: что именно ждёт покупок и из какого
+  // отчёта. Без него человек узнаёт об отложенном один раз, в ответе на
+  // применение, и забывает.
+  pending(userId: string) {
+    return this.prisma.withUser(userId, (tx) =>
+      tx.deferredOperation.findMany({ orderBy: { occurredAt: 'desc' } }),
+    )
   }
 
   private async resolveInstruments(trades: TradeOperation[]): Promise<Map<string, string>> {
@@ -266,7 +306,7 @@ export class ApplyImportService {
     provider: string,
     trades: TradeOperation[],
     instrumentIds: Map<string, string>,
-  ): Promise<{ deferred: DeferredSale[]; postponed: Set<string> }> {
+  ): Promise<{ deferred: DeferredRow[]; postponed: Set<string> }> {
     const { lots, imported } = await this.prisma.withUser(userId, async (tx) => ({
       lots: await tx.lot.findMany({
         where: { accountId, qtyRemaining: { gt: '0' } },
@@ -288,7 +328,7 @@ export class ApplyImportService {
       held.set(lot.instrumentId, before.plus(Money.of(lot.qtyRemaining.toString())))
     }
 
-    const deferred: DeferredSale[] = []
+    const deferred: DeferredRow[] = []
     const postponed = new Set<string>()
 
     for (const operation of trades) {
@@ -311,6 +351,9 @@ export class ApplyImportService {
           ticker: operation.ticker,
           quantity: operation.quantity,
           missing: quantity.minus(before).toString(),
+          instrumentId,
+          externalId: operation.externalId,
+          occurredAt: operation.executedAt,
         })
         continue
       }
