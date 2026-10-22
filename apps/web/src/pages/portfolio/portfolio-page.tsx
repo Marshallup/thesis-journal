@@ -111,7 +111,9 @@ export function PortfolioPage() {
             {rows.map((row) => (
               <tr key={row.instrumentId} className="border-b border-rule">
                 <td className="h-8">
-                  {row.symbol}
+                  <Link to={`/instruments/${row.instrumentId}`} className="text-accent">
+                    {row.symbol}
+                  </Link>
                   {row.incomplete ? (
                     // Пометка, а не молчание: по этой бумаге есть продажи,
                     // которые ждут покупок, и любые числа в строке неполны.
