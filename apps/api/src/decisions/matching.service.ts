@@ -68,6 +68,10 @@ export class MatchingService {
       update decisions set unrealized = true
       where unrealized = false
         and created_at + make_interval(days => horizon_days) < ${now}
+        -- Решение задним числом пишется про уже случившуюся сделку, поэтому
+        -- несовершённым быть не может: если сделка не привязана, это пробел
+        -- разметки, а не бездействие.
+        and post_factum = false
         and not exists (
           select 1 from decision_trades where decision_trades.decision_id = decisions.id
         )

@@ -56,7 +56,7 @@ const thesis = (accountId: string, instrumentId: string, horizonDays = 7) => ({
   thesis: 'беру на просадке',
   horizonDays,
   conviction: 4,
-  mood: 'calm',
+  mood: 'calm' as const,
 })
 
 const links = (userId: string) =>

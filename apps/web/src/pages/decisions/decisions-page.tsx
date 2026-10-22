@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { useSession } from '../../shared/api/session.tsx'
+import { daysLabel, holdLabel, moodLabel } from '../../shared/ui/decision-labels.ts'
 import { formatMoscowTime, isNegativeAmount, isZeroAmount } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 
@@ -9,6 +10,7 @@ type Revision = {
   id: string
   thesis: string
   horizonDays: number
+  holdDays: number | null
   conviction: number
   mood: string
   invalidator: string | null
@@ -36,8 +38,10 @@ type Outcome = {
 
 type Decision = {
   id: string
+  side: 'buy' | 'sell'
   thesis: string
   horizonDays: number
+  holdDays: number | null
   conviction: number
   mood: string
   invalidator: string | null
@@ -59,8 +63,11 @@ function waiting(decision: Decision): boolean {
   return decision.trades.length === 0 && !decision.unrealized && decision.outcome.daysLeft >= 0
 }
 
+// Признак хранится, а не считается на лету: «решил и не сделал» — факт
+// истории. Привяжи сделку потом — и вычисляемый признак молча исчез бы, а
+// бездействие осталось бы незамеченным. Выставляет его чтение журнала.
 function expired(decision: Decision): boolean {
-  return decision.trades.length === 0 && (decision.unrealized || decision.outcome.daysLeft < 0)
+  return decision.trades.length === 0 && decision.unrealized
 }
 
 // Действующая редакция — последняя ревизия, если она есть. Исходный текст
@@ -165,16 +172,22 @@ export function DecisionsPage() {
             {/* Подписи словами, а не метаданные через средние точки. */}
             <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-ink-muted">
               <div className="flex gap-1">
-                <dt>горизонт</dt>
-                <dd className="tabular text-ink">{current.horizonDays} дней</dd>
+                <dt>на исполнение</dt>
+                <dd className="tabular text-ink">{daysLabel(current.horizonDays)}</dd>
               </div>
+              {decision.side === 'buy' ? (
+                <div className="flex gap-1">
+                  <dt>удержание</dt>
+                  <dd className="tabular text-ink">{holdLabel(current.holdDays)}</dd>
+                </div>
+              ) : null}
               <div className="flex gap-1">
                 <dt>уверенность</dt>
                 <dd className="tabular text-ink">{current.conviction}</dd>
               </div>
               <div className="flex gap-1">
                 <dt>настроение</dt>
-                <dd className="text-ink">{current.mood}</dd>
+                <dd className="text-ink">{moodLabel(current.mood)}</dd>
               </div>
               <div className="flex gap-1">
                 <dt>записано</dt>
