@@ -15,6 +15,7 @@ import { HealthModule } from './health/health.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
 import { InstrumentsModule } from './instruments/instruments.module.ts'
 import { PortfolioModule } from './portfolio/portfolio.module.ts'
+import { PricesConsumerModule } from './prices/prices-consumer.module.ts'
 import { PricesModule } from './prices/prices.module.ts'
 import { TradesModule } from './trades/trades.module.ts'
 
@@ -83,6 +84,7 @@ import { TradesModule } from './trades/trades.module.ts'
     ImportsModule,
     PortfolioModule,
     PricesModule,
+    PricesConsumerModule,
   ],
   // Через APP_PIPE, а не useGlobalPipes: иначе валидации не будет в тестах,
   // где приложение собирается через Test.createTestingModule.

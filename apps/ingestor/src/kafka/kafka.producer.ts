@@ -10,7 +10,14 @@ import type { Env } from '../config/env.ts'
 // работает в сборщике и падает в проде.
 const { Kafka } = KafkaJS
 
-export type OutgoingMessage = { topic: string; key: string; value: string }
+export type OutgoingMessage = {
+  topic: string
+  key: string
+  value: string
+  // Конверт, а не данные: идентификатор события нужен потребителю для
+  // дедупликации и не относится к предметной области сообщения.
+  headers?: Record<string, string>
+}
 
 @Injectable()
 export class KafkaProducer implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -43,13 +50,23 @@ export class KafkaProducer implements OnApplicationBootstrap, OnApplicationShutd
 
     await producer.sendBatch({
       topicMessages: Object.entries(
-        messages.reduce<Record<string, { key: string; value: string }[]>>((byTopic, message) => {
+        messages.reduce<Record<string, OutgoingMessage[]>>((byTopic, message) => {
           const batch = byTopic[message.topic] ?? []
-          batch.push({ key: message.key, value: message.value })
+          batch.push(message)
           byTopic[message.topic] = batch
           return byTopic
         }, {}),
-      ).map(([topic, batch]) => ({ topic, messages: batch })),
+      ).map(([topic, batch]) => ({
+        topic,
+        // Заголовки раскрываются, а не передаются как undefined: при
+        // exactOptionalPropertyTypes «нет поля» и «поле со значением
+        // undefined» — разные вещи, и вторую клиент не принимает.
+        messages: batch.map(({ key, value, headers }) => ({
+          key,
+          value,
+          ...(headers ? { headers } : {}),
+        })),
+      })),
     })
   }
 

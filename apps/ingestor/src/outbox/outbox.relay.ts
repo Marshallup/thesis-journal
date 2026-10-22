@@ -35,6 +35,9 @@ export class OutboxRelay {
             topic: event.topic,
             key: event.key,
             value: JSON.stringify(event.payload),
+            // По нему потребитель узнаёт дубль. В теле сообщения ему не место:
+            // это свойство доставки, а не факта о цене.
+            headers: { 'event-id': event.id },
           })),
         )
         // Только после подтверждённой отправки: упасть здесь значит отправить

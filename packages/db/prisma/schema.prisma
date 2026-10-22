@@ -72,6 +72,19 @@ model Account {
   @@schema("public")
 }
 
+// Обработанные сообщения: дедупликация потребителя событий. RLS нет —
+// это инфраструктура, а не данные пользователя.
+model ProcessedMessage {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  consumer    String
+  eventId     String   @map("event_id") @db.Uuid
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(6)
+
+  @@unique([consumer, eventId], map: "processed_message_identity")
+  @@map("processed_messages")
+  @@schema("public")
+}
+
 // Исходящие события. Пишутся в одной транзакции с данными, отправляются
 // отдельным циклом: см. комментарий в миграции и правило про outbox.
 model OutboxEvent {
