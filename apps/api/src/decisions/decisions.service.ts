@@ -95,6 +95,7 @@ export class DecisionsService {
           side: dto.side,
           thesis: dto.thesis,
           horizonDays: dto.horizonDays,
+          holdDays: dto.holdDays ?? null,
           conviction: dto.conviction,
           mood: dto.mood,
           postFactum: dto.postFactum ?? false,
@@ -141,6 +142,7 @@ export class DecisionsService {
           decisionId: id,
           thesis: dto.thesis ?? current.thesis,
           horizonDays: dto.horizonDays ?? current.horizonDays,
+          holdDays: dto.holdDays ?? current.holdDays,
           conviction: dto.conviction ?? current.conviction,
           mood: dto.mood ?? current.mood,
           invalidator: dto.invalidator ?? current.invalidator,
@@ -154,6 +156,12 @@ export class DecisionsService {
   // Действующее состояние — последняя ревизия, если она есть. История отдаётся
   // целиком: в ней и смысл дневника, а не только в текущей редакции.
   async list(userId: string) {
+    // Учёт бездействия включается здесь, а не в планировщике: признак нужен
+    // по одному пользователю, а планировщик бежит без него и под RLS увидел
+    // бы пусто. Запись идемпотентна и трогает только решения без сделок, у
+    // которых горизонт уже прошёл.
+    await this.matching.markExpired(userId, new Date())
+
     const { decisions, realized, openLots } = await this.prisma.withUser(userId, async (tx) => ({
       decisions: await tx.decision.findMany({
         orderBy: { createdAt: 'desc' },

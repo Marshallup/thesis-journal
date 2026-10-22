@@ -36,6 +36,10 @@ type PortfolioAccount = {
 
 type CurrencyTotal = { currency: string; totalPnl: string }
 
+// Решения без сделок: ровно то, чего не показывает ни один брокер — он знает
+// только совершённое.
+type Decision = { id: string; unrealized: boolean; trades: unknown[] }
+
 export function TradesPage() {
   const { signOut } = useSession()
 
@@ -56,6 +60,14 @@ export function TradesPage() {
 
   const symbols = new Map(instruments.data?.map((item) => [item.id, item.symbol]))
   const noAccounts = accounts.isSuccess && accounts.data.length === 0
+  const decisions = useQuery({
+    queryKey: ['decisions'],
+    queryFn: () => api<Decision[]>('/decisions'),
+  })
+  const idle = (decisions.data ?? []).filter(
+    (decision) => decision.unrealized && decision.trades.length === 0,
+  ).length
+
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
   // Подпись безымянного счёта уточняется только на фоне остальных.
@@ -159,6 +171,16 @@ export function TradesPage() {
               ))}
             </tbody>
           </table>
+
+          {idle > 0 ? (
+            <p className="mt-2 text-sm">
+              Решений, у которых срок на исполнение прошёл без сделки:{' '}
+              <span className="tabular">{idle}</span>.{' '}
+              <Link to="/decisions" className="text-accent">
+                Посмотреть
+              </Link>
+            </p>
+          ) : null}
 
           <p className="mt-2 text-xs text-ink-muted">
             Взносы в итог не входят: это принесённые деньги, а не заработок. Нереализованное

@@ -41,7 +41,7 @@ const draft = (accountId: string, instrumentId: string) => ({
   side: 'buy' as const,
   horizonDays: 90,
   conviction: 4,
-  mood: 'calm',
+  mood: 'calm' as const,
 })
 
 beforeAll(async () => {

@@ -183,8 +183,13 @@ model Decision {
   side         String
 
   thesis          String
+  // Срок на исполнение: окно, в котором сделка относится к решению.
+  // Матчинг читает именно его, см. design.md §2.1.
   horizonDays     Int      @map("horizon_days")
+  // Срок удержания: на сколько человек заходит. NULL — не указан.
+  holdDays        Int?     @map("hold_days")
   conviction      Int
+  // calm | thrill | fear | boredom | fomo — проверяется CHECK в базе.
   mood            String
   invalidator     String?
   tags            String[]
@@ -215,6 +220,7 @@ model DecisionRevision {
 
   thesis      String
   horizonDays Int      @map("horizon_days")
+  holdDays    Int?     @map("hold_days")
   conviction  Int
   mood        String
   invalidator String?

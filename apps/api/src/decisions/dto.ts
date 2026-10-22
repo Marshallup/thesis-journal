@@ -1,12 +1,19 @@
 import { z } from 'zod'
 
+// Закрытое множество: свободная строка уже дала в данных 'calm' рядом со
+// 'спокойно', то есть один факт двумя значениями. Подписи живут в интерфейсе.
+export const MOODS = ['calm', 'thrill', 'fear', 'boredom', 'fomo'] as const
+
 // Поля, которые правятся ревизией. Собраны отдельно, чтобы схема создания и
 // схема правки не разошлись при добавлении нового поля.
 const revisable = {
   thesis: z.string().min(1).max(500),
+  // Срок на исполнение: окно, в котором сделка относится к решению.
   horizonDays: z.number().int().positive(),
+  // Срок удержания: на сколько человек заходит. У продажи его нет.
+  holdDays: z.number().int().positive().max(36500).optional(),
   conviction: z.number().int().min(1).max(5),
-  mood: z.string().min(1).max(50),
+  mood: z.enum(MOODS),
   invalidator: z.string().min(1).max(500).optional(),
   tags: z.array(z.string().min(1).max(50)).max(20).optional(),
   freeText: z.string().max(5000).optional(),
@@ -34,6 +41,7 @@ export const reviseDecisionSchema = z
   .object({
     thesis: revisable.thesis.optional(),
     horizonDays: revisable.horizonDays.optional(),
+    holdDays: revisable.holdDays,
     conviction: revisable.conviction.optional(),
     mood: revisable.mood.optional(),
     invalidator: revisable.invalidator,

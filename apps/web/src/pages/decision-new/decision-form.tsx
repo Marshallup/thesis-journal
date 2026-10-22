@@ -4,6 +4,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { accountLabel } from '../../shared/ui/account-label.ts'
 import type { LabelledAccount } from '../../shared/ui/account-label.ts'
+import {
+  daysLabel,
+  EXECUTION_DAYS,
+  HOLD_DAYS,
+  MOOD_KEYS,
+  moodLabel,
+} from '../../shared/ui/decision-labels.ts'
 import { formatMoscowTime } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 
@@ -27,11 +34,9 @@ type ContextSnapshot = {
   portfolioDrawdownPct: string | null
 }
 
-// Горизонты фиксированные: свободный ввод дней превращает решение в торг
-// с собой, а четыре варианта заставляют выбрать.
-const HORIZONS = [7, 30, 90, 365] as const
+// Сроки фиксированные: свободный ввод дней превращает решение в торг с собой,
+// а несколько вариантов заставляют выбрать.
 const CONVICTIONS = [1, 2, 3, 4, 5] as const
-const MOODS = ['спокойно', 'азарт', 'страх', 'скука', 'упустить'] as const
 const WEEKDAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота']
 
 export function DecisionForm() {
@@ -58,9 +63,13 @@ export function DecisionForm() {
   // Сделка из ссылки отмечена заранее: на экране разметки её уже выбрали.
   const [picked, setPicked] = useState<string[]>(tradeId ? [tradeId] : [])
   const [thesis, setThesis] = useState('')
-  const [horizonDays, setHorizonDays] = useState<number>(90)
+  // Без значения по умолчанию: в журнале пять записей из восьми стояли на
+  // девяноста днях — то есть срок не выбирали, а принимали. Поле, которое не
+  // выбирают, не данные.
+  const [horizonDays, setHorizonDays] = useState<number | null>(null)
+  const [holdDays, setHoldDays] = useState<number | null>(null)
   const [conviction, setConviction] = useState<number>(3)
-  const [mood, setMood] = useState<string>(MOODS[0])
+  const [mood, setMood] = useState<string>(MOOD_KEYS[0]!)
   const [invalidator, setInvalidator] = useState('')
   const [freeTextOpen, setFreeTextOpen] = useState(false)
   const [freeText, setFreeText] = useState('')
@@ -83,6 +92,10 @@ export function DecisionForm() {
   // спрашивается: вопрос «это задним числом?» человек ответил бы как удобнее.
   const retro = postFactum || picked.length > 0
 
+  // Срок удержания есть только у покупки: продажа ничего не держит.
+  const holds = side === 'buy'
+  const complete = horizonDays !== null && (!holds || holdDays !== null)
+
   // Снимок подтягивается сам и только показывается. При записи сервер считает
   // свой — этот предпросмотр отправить нельзя.
   const context = useQuery({
@@ -104,6 +117,7 @@ export function DecisionForm() {
           side,
           thesis,
           horizonDays,
+          ...(holds && holdDays !== null ? { holdDays } : {}),
           conviction,
           mood,
           ...(retro ? { postFactum: true } : {}),
@@ -192,6 +206,7 @@ export function DecisionForm() {
               onChange={(event) => {
                 setSide(event.target.value === 'sell' ? 'sell' : 'buy')
                 setPicked([])
+                setHoldDays(null)
               }}
               className="rounded-sm border border-rule bg-surface px-2 py-1.5"
             >
@@ -257,9 +272,9 @@ export function DecisionForm() {
         </label>
 
         <fieldset className="flex flex-col gap-1">
-          <legend className="text-sm text-ink-muted">Горизонт</legend>
+          <legend className="text-sm text-ink-muted">Срок на исполнение</legend>
           <div className="flex gap-2">
-            {HORIZONS.map((days) => (
+            {EXECUTION_DAYS.map((days) => (
               <button
                 key={days}
                 type="button"
@@ -269,11 +284,40 @@ export function DecisionForm() {
                   horizonDays === days ? 'border-accent text-accent' : 'border-rule text-ink-muted'
                 }`}
               >
-                {days} дней
+                {daysLabel(days)}
               </button>
             ))}
           </div>
+          <p className="text-xs text-ink-muted">
+            За этот срок намерение должно стать сделкой. Не стало — решение останется несовершённым,
+            и это тоже запись о вас.
+          </p>
         </fieldset>
+
+        {holds ? (
+          <fieldset className="flex flex-col gap-1">
+            <legend className="text-sm text-ink-muted">Срок удержания</legend>
+            <div className="flex gap-2">
+              {HOLD_DAYS.map((days) => (
+                <button
+                  key={days}
+                  type="button"
+                  onClick={() => setHoldDays(days)}
+                  aria-pressed={holdDays === days}
+                  className={`tabular rounded-sm border px-3 py-1 ${
+                    holdDays === days ? 'border-accent text-accent' : 'border-rule text-ink-muted'
+                  }`}
+                >
+                  {daysLabel(days)}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-ink-muted">
+              На сколько заходите. Потом по нему видно главное: продали раньше, чем сами себе
+              обещали, или досидели.
+            </p>
+          </fieldset>
+        ) : null}
 
         <fieldset className="flex flex-col gap-1">
           <legend className="text-sm text-ink-muted">Уверенность</legend>
@@ -301,9 +345,9 @@ export function DecisionForm() {
             onChange={(event) => setMood(event.target.value)}
             className="w-48 rounded-sm border border-rule bg-surface px-2 py-1.5"
           >
-            {MOODS.map((item) => (
+            {MOOD_KEYS.map((item) => (
               <option key={item} value={item}>
-                {item}
+                {moodLabel(item)}
               </option>
             ))}
           </select>
@@ -366,9 +410,15 @@ export function DecisionForm() {
           </p>
         ) : null}
 
+        {complete ? null : (
+          <p className="text-sm text-ink-muted">
+            Осталось выбрать срок на исполнение{holds ? ' и срок удержания' : ''}.
+          </p>
+        )}
+
         <button
           type="submit"
-          disabled={save.isPending}
+          disabled={save.isPending || !complete}
           className="self-start rounded-sm bg-accent px-3 py-1.5 text-paper disabled:opacity-60"
         >
           {save.isPending ? 'Записываем' : 'Записать'}
