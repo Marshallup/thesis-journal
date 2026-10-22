@@ -4,9 +4,20 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { accountLabel } from '../../shared/ui/account-label.ts'
 import type { LabelledAccount } from '../../shared/ui/account-label.ts'
+import { formatMoscowTime } from '../../shared/ui/format.ts'
+import { Money } from '../../shared/ui/money.tsx'
 
 type Account = LabelledAccount & { kind: string }
 type Instrument = { id: string; symbol: string }
+
+type UnlinkedTrade = {
+  id: string
+  accountId: string
+  side: 'buy' | 'sell'
+  quantity: string
+  price: string
+  executedAt: string
+}
 
 type ContextSnapshot = {
   capturedAt: string
@@ -44,6 +55,8 @@ export function DecisionForm() {
   const [accountId, setAccountId] = useState(params.get('accountId') ?? '')
   const [instrumentId, setInstrumentId] = useState(params.get('instrumentId') ?? '')
   const [side, setSide] = useState<'buy' | 'sell'>(params.get('side') === 'sell' ? 'sell' : 'buy')
+  // Сделка из ссылки отмечена заранее: на экране разметки её уже выбрали.
+  const [picked, setPicked] = useState<string[]>(tradeId ? [tradeId] : [])
   const [thesis, setThesis] = useState('')
   const [horizonDays, setHorizonDays] = useState<number>(90)
   const [conviction, setConviction] = useState<number>(3)
@@ -53,6 +66,22 @@ export function DecisionForm() {
   const [freeText, setFreeText] = useState('')
 
   const ready = accountId !== '' && instrumentId !== ''
+
+  // Непривязанные сделки по этой бумаге: сервер примет только те, у которых
+  // совпадают счёт, бумага и сторона, поэтому остальные отсеиваются здесь.
+  const unlinked = useQuery({
+    queryKey: ['trades', 'unlinked', instrumentId],
+    queryFn: () => api<UnlinkedTrade[]>(`/trades?linked=false&instrumentId=${instrumentId}`),
+    enabled: ready,
+  })
+  const own = (unlinked.data ?? []).filter(
+    (trade) => trade.accountId === accountId && trade.side === side,
+  )
+
+  // Любая уже существующая сделка случилась раньше этой записи, поэтому выбор
+  // сделки означает решение задним числом. Пометка ставится сама, а не
+  // спрашивается: вопрос «это задним числом?» человек ответил бы как удобнее.
+  const retro = postFactum || picked.length > 0
 
   // Снимок подтягивается сам и только показывается. При записи сервер считает
   // свой — этот предпросмотр отправить нельзя.
@@ -77,8 +106,8 @@ export function DecisionForm() {
           horizonDays,
           conviction,
           mood,
-          ...(postFactum ? { postFactum: true } : {}),
-          ...(tradeId ? { tradeIds: [tradeId] } : {}),
+          ...(retro ? { postFactum: true } : {}),
+          ...(picked.length > 0 ? { tradeIds: picked } : {}),
           ...(invalidator ? { invalidator } : {}),
           ...(freeText ? { freeText } : {}),
         }),
@@ -95,9 +124,9 @@ export function DecisionForm() {
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
-      <h1 className="font-serif text-xl">{postFactum ? 'Решение задним числом' : 'Решение'}</h1>
+      <h1 className="font-serif text-xl">{retro ? 'Решение задним числом' : 'Решение'}</h1>
       <p className="mt-1 text-sm text-ink-muted">
-        {postFactum
+        {retro
           ? // Пометка не наказание, а защита статистики: задним числом тезис пишется, когда исход уже известен, и такие записи нельзя смешивать с теми, что писались до сделки.
             'Сделка уже есть, тезис пишется после. Запись будет помечена как post factum и не попадёт в поведенческие срезы — иначе они покажут не ваши решения, а то, как вы их объясняете.'
           : 'Записывается до сделки и больше не меняется. Правка создаёт ревизию.'}
@@ -120,7 +149,10 @@ export function DecisionForm() {
             </span>
             <select
               value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
+              onChange={(event) => {
+                setAccountId(event.target.value)
+                setPicked([])
+              }}
               required
               className="rounded-sm border border-rule bg-surface px-2 py-1.5"
             >
@@ -137,7 +169,10 @@ export function DecisionForm() {
             <span className="text-sm text-ink-muted">Инструмент</span>
             <select
               value={instrumentId}
-              onChange={(event) => setInstrumentId(event.target.value)}
+              onChange={(event) => {
+                setInstrumentId(event.target.value)
+                setPicked([])
+              }}
               required
               className="rounded-sm border border-rule bg-surface px-2 py-1.5"
             >
@@ -154,7 +189,10 @@ export function DecisionForm() {
             <span className="text-sm text-ink-muted">Сторона</span>
             <select
               value={side}
-              onChange={(event) => setSide(event.target.value === 'sell' ? 'sell' : 'buy')}
+              onChange={(event) => {
+                setSide(event.target.value === 'sell' ? 'sell' : 'buy')
+                setPicked([])
+              }}
               className="rounded-sm border border-rule bg-surface px-2 py-1.5"
             >
               <option value="buy">покупка</option>
@@ -162,6 +200,49 @@ export function DecisionForm() {
             </select>
           </label>
         </div>
+
+        {ready ? (
+          <fieldset className="flex flex-col gap-1">
+            <legend className="text-sm text-ink-muted">Сделки без тезиса по этой бумаге</legend>
+            {own.length === 0 ? (
+              <p className="text-sm text-ink-muted">
+                Таких сделок нет — значит, решение пишется до сделки. Так и задумано.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1 text-sm">
+                {own.map((trade) => (
+                  <li key={trade.id}>
+                    <label className="flex items-baseline gap-3">
+                      <input
+                        type="checkbox"
+                        checked={picked.includes(trade.id)}
+                        onChange={() =>
+                          setPicked((current) =>
+                            current.includes(trade.id)
+                              ? current.filter((id) => id !== trade.id)
+                              : [...current, trade.id],
+                          )
+                        }
+                      />
+                      <span className="tabular text-ink-muted">
+                        {formatMoscowTime(trade.executedAt)}
+                      </span>
+                      <Money value={trade.quantity} fractionDigits={0} maxFractionDigits={18} />
+                      <span className="text-ink-muted">по</span>
+                      <Money value={trade.price} />
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {picked.length > 0 && !postFactum ? (
+              <p className="mt-1 text-sm text-loss">
+                Выбранные сделки уже случились, поэтому запись будет помечена «задним числом» и не
+                попадёт в оценку решений.
+              </p>
+            ) : null}
+          </fieldset>
+        ) : null}
 
         <label className="flex flex-col gap-1">
           <span className="text-sm text-ink-muted">Тезис</span>
