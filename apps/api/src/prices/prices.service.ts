@@ -6,10 +6,21 @@ import { MoexClient } from './moex.client.ts'
 export type Quote = { instrumentId: string; price: string; quotedAt: Date }
 
 const SOURCE = 'moex'
+const DAY_MS = 24 * 60 * 60 * 1000
+// Пять лет дневных закрытий — около 1250 точек на бумагу. Отчёт брокера
+// отдаёт максимум год за выгрузку, но сделки руками бывают и старше.
+const HISTORY_DAYS = 5 * 365
+// Начало окна может попасть на выходные: требовать цену ровно в этот день
+// значит просить историю заново каждый раз.
+const GRACE_MS = 7 * DAY_MS
 
 @Injectable()
 export class PricesService {
   private readonly log = new Logger(PricesService.name)
+  // Бумаги, по которым в этом процессе историю уже пытались получить. Без
+  // этого делистованная бумага, которой на доске нет, запрашивается каждый
+  // цикл вечно.
+  private readonly attempted = new Set<string>()
 
   constructor(
     private readonly prisma: PrismaService,
@@ -47,6 +58,53 @@ export class PricesService {
       skipDuplicates: true,
     })
     return { saved: count, seen: quotes.length }
+  }
+
+  // Пятиминутный опрос копит только «сегодня», а сделки в отчёте брокера
+  // бывают многолетней давности: без истории все они слипаются в одну точку.
+  // Дневные закрытия закрывают разрыв — один раз на бумагу.
+  async backfill(): Promise<{ filled: number; saved: number }> {
+    const instruments = await this.prisma.instrument.findMany({
+      where: { class: 'equity' },
+      select: { id: true, symbol: true },
+    })
+    const from = new Date(Date.now() - HISTORY_DAYS * DAY_MS)
+    let filled = 0
+    let saved = 0
+
+    for (const instrument of instruments) {
+      if (this.attempted.has(instrument.symbol)) continue
+      const first = await this.prisma.instrumentPrice.findFirst({
+        where: { instrumentId: instrument.id },
+        orderBy: { quotedAt: 'asc' },
+        select: { quotedAt: true },
+      })
+      // Есть цена не новее начала окна — история закрыта. У бумаги, которая
+      // появилась на бирже позже, этого не случится никогда, и от вечных
+      // запросов спасает только память процесса.
+      if (first && first.quotedAt.getTime() <= from.getTime() + GRACE_MS) continue
+
+      const closes = await this.moex.history(instrument.symbol, from)
+      // Отметка ставится после ответа, а не до: сорвавшийся запрос нужно
+      // повторить в следующем цикле, пустой ответ — нет.
+      this.attempted.add(instrument.symbol)
+      if (closes.length === 0) {
+        this.log.warn(`истории по ${instrument.symbol} на доске нет`)
+        continue
+      }
+      const { count } = await this.prisma.instrumentPrice.createMany({
+        data: closes.map(({ price, quotedAt }) => ({
+          instrumentId: instrument.id,
+          source: SOURCE,
+          price,
+          quotedAt,
+        })),
+        skipDuplicates: true,
+      })
+      filled += 1
+      saved += count
+    }
+    return { filled, saved }
   }
 
   // Последняя цена на инструмент — max(quoted_at). Опоздавшая точка лежит в

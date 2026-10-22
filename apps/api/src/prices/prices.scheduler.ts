@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common'
+import type { OnApplicationBootstrap } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { Interval } from '@nestjs/schedule'
 import type { Env } from '../config/env.ts'
@@ -14,7 +15,7 @@ const FAILURES_TO_OPEN = 3
 const COOLDOWN_MS = 15 * 60 * 1000
 
 @Injectable()
-export class PricesScheduler {
+export class PricesScheduler implements OnApplicationBootstrap {
   private readonly log = new Logger(PricesScheduler.name)
   private lastRun = 0
   private failures = 0
@@ -24,6 +25,12 @@ export class PricesScheduler {
     private readonly prices: PricesService,
     private readonly config: ConfigService<Env, true>,
   ) {}
+
+  // Interval срабатывает только через пять минут после старта, а цена нужна
+  // сразу: иначе свежеподнятое приложение показывает прочерки.
+  onApplicationBootstrap(): Promise<void> {
+    return this.refresh()
+  }
 
   @Interval(REFRESH_MS)
   async refresh(): Promise<void> {
@@ -40,6 +47,13 @@ export class PricesScheduler {
       const { saved, seen } = await this.prices.refresh()
       this.failures = 0
       if (saved > 0) this.log.log(`котировки: сохранено ${saved} из ${seen} строк доски`)
+
+      // После живых котировок, а не до: история нужна один раз, а свежая цена
+      // каждый цикл, и падение истории не должно отменять её.
+      const history = await this.prices.backfill()
+      if (history.filled > 0) {
+        this.log.log(`история: ${history.saved} дневных цен по ${history.filled} бумагам`)
+      }
     } catch (error) {
       this.failures += 1
       if (this.failures === FAILURES_TO_OPEN) this.openedAt = now

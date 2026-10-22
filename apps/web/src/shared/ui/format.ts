@@ -52,3 +52,20 @@ const moscow = new Intl.DateTimeFormat('ru-RU', {
 export function formatMoscowTime(iso: string): string {
   return moscow.format(new Date(iso))
 }
+
+// График хранит время числом секунд, а не строкой ISO.
+export function formatMoscowMoment(at: Date): string {
+  return moscow.format(at)
+}
+
+// en-CA даёт ровно YYYY-MM-DD — готовый ключ дня по московскому календарю.
+const moscowDate = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Moscow',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+export function moscowDay(iso: string): string {
+  return moscowDate.format(new Date(iso))
+}

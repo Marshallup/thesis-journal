@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../../shared/api/client.ts'
-import { formatMoscowTime } from '../../shared/ui/format.ts'
+import { formatAmount, formatMoscowTime, moscowDay } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 import { PriceChart } from './price-chart.tsx'
 import type { ChartMarker, ChartPoint } from './price-chart.tsx'
@@ -44,16 +45,74 @@ function changeSince(trade: Trade | undefined, price: string | null): string | n
   return `${percent > 0 ? '+' : ''}${percent.toFixed(1)} %`
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+const MIN_DAYS = 90
+const MARGIN_DAYS = 30
+// Потолок окна в контракте API: больше десяти лет не спрашиваем.
+const MAX_DAYS = 3650
+const QUANTITY = { fractionDigits: 0, maxFractionDigits: 18, signed: false }
+
+// Окно графика — на месяц раньше первой сделки. С окном по умолчанию все
+// отметки старше трёх месяцев оказываются левее первой известной цены, и
+// график честно показывает их нигде.
+function windowDays(trades: Trade[]): number {
+  // Список приходит от новых к старым.
+  const first = trades.at(-1)
+  if (!first) return MIN_DAYS
+  const since = Math.ceil((Date.now() - Date.parse(first.executedAt)) / DAY_MS)
+  return Math.min(MAX_DAYS, Math.max(MIN_DAYS, since + MARGIN_DAYS))
+}
+
+// Сделки одного дня и одной стороны — одна отметка: у дневной цены нет часов,
+// и семь продаж подряд рисуются одна поверх другой. Там, где сделка одна,
+// в подписи остаётся количество; где их несколько — их число: складывать
+// количества на фронте нечем, Money живёт на бэкенде.
+function tradeMarkers(trades: Trade[]): ChartMarker[] {
+  const byDay = new Map<
+    string,
+    { at: string; side: 'buy' | 'sell'; quantity: string; count: number }
+  >()
+
+  for (const trade of trades) {
+    const key = `${moscowDay(trade.executedAt)} ${trade.side}`
+    const group = byDay.get(key)
+    if (!group) {
+      byDay.set(key, {
+        at: trade.executedAt,
+        side: trade.side,
+        quantity: trade.quantity,
+        count: 1,
+      })
+      continue
+    }
+    group.count += 1
+    // Отметка встаёт на первую сделку дня: по ней видно, когда человек начал.
+    if (trade.executedAt < group.at) group.at = trade.executedAt
+  }
+
+  return [...byDay.values()].map((group) => ({
+    at: group.at,
+    side: group.side,
+    kind: 'trade' as const,
+    text: `${group.side === 'buy' ? 'куп' : 'прод'} ${
+      group.count === 1 ? formatAmount(group.quantity, QUANTITY) : `×${group.count}`
+    }`,
+  }))
+}
+
 export function InstrumentPage() {
   const { id = '' } = useParams()
 
-  const prices = useQuery({
-    queryKey: ['prices', id],
-    queryFn: () => api<ChartPoint[]>(`/prices/${id}`),
-  })
   const trades = useQuery({
     queryKey: ['trades', id],
     queryFn: () => api<Trade[]>(`/trades?instrumentId=${id}`),
+  })
+  // Цены ждут сделок: окно считается по самой старой из них.
+  const days = windowDays(trades.data ?? [])
+  const prices = useQuery({
+    queryKey: ['prices', id, days],
+    queryFn: () => api<ChartPoint[]>(`/prices/${id}?days=${days}`),
+    enabled: trades.isSuccess,
   })
   const decisions = useQuery({
     queryKey: ['decisions'],
@@ -65,24 +124,29 @@ export function InstrumentPage() {
   })
 
   const row = portfolio.data?.rows.find((item) => item.instrumentId === id)
-  const ownDecisions = decisions.data?.filter((item) => item.instrumentId === id) ?? []
+  // Массивы считаются через useMemo: новый массив на каждый рендер — это новая
+  // ссылка, и график перерисовывал бы данные без причины.
+  const ownDecisions = useMemo(
+    () => decisions.data?.filter((item) => item.instrumentId === id) ?? [],
+    [decisions.data, id],
+  )
   const lastTrade = trades.data?.[0]
   const change = changeSince(lastTrade, row?.price ?? null)
 
-  const markers: ChartMarker[] = [
-    ...(trades.data ?? []).map((trade) => ({
-      at: trade.executedAt,
-      side: trade.side,
-      kind: 'trade' as const,
-      text: `${trade.side === 'buy' ? 'куп' : 'прод'} ${Number(trade.quantity)}`,
-    })),
-    ...ownDecisions.map((decision) => ({
-      at: decision.createdAt,
-      side: decision.side,
-      kind: 'decision' as const,
-      text: decision.thesis.slice(0, 24),
-    })),
-  ]
+  const markers = useMemo<ChartMarker[]>(
+    () => [
+      ...tradeMarkers(trades.data ?? []),
+      // Тезис целиком лежит в списке под графиком: на оси он перекрывал
+      // подписи сделок и читался хуже, чем нигде.
+      ...ownDecisions.map((decision) => ({
+        at: decision.createdAt,
+        side: decision.side,
+        kind: 'decision' as const,
+        text: 'тезис',
+      })),
+    ],
+    [trades.data, ownDecisions],
+  )
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
@@ -137,8 +201,8 @@ export function InstrumentPage() {
           <div className="flex justify-between">
             <dt className="text-ink-muted">
               Последняя сделка: {lastTrade.side === 'buy' ? 'покупка' : 'продажа'}{' '}
-              {Number(lastTrade.quantity)} по <Money value={lastTrade.price} /> ·{' '}
-              {formatMoscowTime(lastTrade.executedAt)}
+              <Money value={lastTrade.quantity} fractionDigits={0} maxFractionDigits={18} /> по{' '}
+              <Money value={lastTrade.price} /> · {formatMoscowTime(lastTrade.executedAt)}
             </dt>
             <dd
               className={`tabular ${change?.startsWith('-') ? 'text-loss' : change ? 'text-gain' : ''}`}
