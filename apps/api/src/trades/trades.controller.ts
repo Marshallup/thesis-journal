@@ -25,8 +25,12 @@ export class TradesController {
     // В query всё приходит строкой, поэтому «false» — это строка, а не boolean.
     @Query('linked', { schema: z.enum(['true', 'false']).optional() })
     linked: 'true' | 'false' | undefined,
+    @Query('instrumentId', { schema: z.uuid().optional() }) instrumentId: string | undefined,
   ) {
-    return this.trades.list(user.userId, linked ? { linked: linked === 'true' } : {})
+    return this.trades.list(user.userId, {
+      ...(linked ? { linked: linked === 'true' } : {}),
+      ...(instrumentId ? { instrumentId } : {}),
+    })
   }
 
   @Post()
