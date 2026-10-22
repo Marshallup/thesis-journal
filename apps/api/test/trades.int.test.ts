@@ -226,3 +226,62 @@ it('отдаёт только сделки без привязанного ре�
   expect(unlinked.map((trade) => trade.id)).not.toContain(linkedTrade.id)
   expect(unlinked).toHaveLength(1)
 })
+
+// --- Задача 28: фильтр по счёту -----------------------------------------
+
+// Два счёта одного брокера — обычное дело, и сделки по одной бумаге на них
+// выглядят дублями. Фильтрует сервер: клиентская фильтрация означала бы
+// «скачать всё и спрятать лишнее».
+it('фильтр отдаёт сделки только указанного счёта', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('filter@example.com')
+  const second = await db.prisma.account.create({
+    data: { userId, provider: 'sber', kind: 'broker', baseCurrency: 'RUB' },
+  })
+
+  await service.apply(userId, {
+    accountId,
+    instrumentId,
+    side: 'buy',
+    quantity: '1',
+    price: '100',
+    fee: '0',
+    executedAt: '2026-02-01T10:00:00Z',
+  })
+  await service.apply(userId, {
+    accountId: second.id,
+    instrumentId,
+    side: 'buy',
+    quantity: '3',
+    price: '110',
+    fee: '0',
+    executedAt: '2026-02-02T10:00:00Z',
+  })
+
+  const all = await service.list(userId)
+  const onlySecond = await service.list(userId, { accountId: second.id })
+
+  expect(all).toHaveLength(2)
+  expect(onlySecond).toHaveLength(1)
+  expect(money(onlySecond[0]!.quantity)).toBe('3')
+})
+
+// Чужой счёт — не ошибка и не чужие данные: пустой список. Отдаёт его RLS, а
+// не проверка в коде, и это второй рубеж под фильтром.
+it('чужой счёт даёт пустой список, а не чужие сделки', async () => {
+  const mine = await seedAccount('filter-mine@example.com')
+  const stranger = await seedAccount('filter-stranger@example.com')
+
+  await service.apply(stranger.userId, {
+    accountId: stranger.accountId,
+    instrumentId: stranger.instrumentId,
+    side: 'buy',
+    quantity: '5',
+    price: '100',
+    fee: '0',
+    executedAt: '2026-03-01T10:00:00Z',
+  })
+
+  const foreign = await service.list(mine.userId, { accountId: stranger.accountId })
+
+  expect(foreign).toHaveLength(0)
+})

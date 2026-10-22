@@ -134,3 +134,78 @@ it('помечает решение нереализованным, когда �
 function isoSoonAfter(moment: Date, hours = 1): string {
   return new Date(moment.getTime() + hours * 60 * 60 * 1000).toISOString()
 }
+
+// --- Задача 27: сроки и учёт бездействия --------------------------------
+
+// Решение задним числом пишется про уже случившуюся сделку. Непривязанная
+// сделка у него — пробел разметки, а не бездействие: «решил и не сделал» про
+// него неправда.
+it('не считает несовершённым решение, записанное задним числом', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('postfactum@example.com')
+  const decision = await decisions.create(userId, {
+    ...thesis(accountId, instrumentId, 1),
+    postFactum: true,
+  })
+
+  const later = new Date(decision.createdAt.getTime() + 3 * 24 * 60 * 60 * 1000)
+  await matching.markExpired(userId, later)
+
+  const updated = await prisma.withUser(userId, (tx) =>
+    tx.decision.findUniqueOrThrow({ where: { id: decision.id } }),
+  )
+  expect(updated.unrealized).toBe(false)
+})
+
+// Решение со сделкой исполнено, и срок к нему больше не применим.
+it('не трогает решение, у которого сделка есть', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('executed@example.com')
+  const decision = await decisions.create(userId, thesis(accountId, instrumentId, 1))
+  await trades.apply(userId, buy(accountId, instrumentId, isoSoonAfter(decision.createdAt)))
+  expect(await links(userId)).toHaveLength(1)
+
+  const later = new Date(decision.createdAt.getTime() + 3 * 24 * 60 * 60 * 1000)
+  await matching.markExpired(userId, later)
+
+  const updated = await prisma.withUser(userId, (tx) =>
+    tx.decision.findUniqueOrThrow({ where: { id: decision.id } }),
+  )
+  expect(updated.unrealized).toBe(false)
+})
+
+// Срок удержания — отдельное поле, и оно обязано доезжать до базы и обратно.
+// У продажи его нет: держать после продажи нечего.
+it('срок удержания сохраняется и возвращается в ленту', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('hold@example.com')
+  await decisions.create(userId, { ...thesis(accountId, instrumentId), holdDays: 365 })
+
+  const [listed] = await decisions.list(userId)
+
+  expect(listed?.holdDays).toBe(365)
+  // Срок на исполнение — другое число и другое поле: их разделение и было
+  // смыслом задачи 27.
+  expect(listed?.horizonDays).toBe(7)
+})
+
+// Закрытое множество значений держит база, а не только Zod: колонку правит и
+// импорт, и будущие воркеры.
+it('база отклоняет неизвестное настроение', async () => {
+  const { userId, accountId, instrumentId } = await seedAccount('mood@example.com')
+
+  await expect(
+    db.prisma.decision.create({
+      data: {
+        accountId,
+        instrumentId,
+        side: 'buy',
+        thesis: 'настроение не из списка',
+        horizonDays: 7,
+        conviction: 3,
+        mood: 'весело',
+      },
+    }),
+  ).rejects.toThrow()
+
+  // И ни одной записи не появилось.
+  const all = await prisma.withUser(userId, (tx) => tx.decision.findMany())
+  expect(all).toHaveLength(0)
+})
