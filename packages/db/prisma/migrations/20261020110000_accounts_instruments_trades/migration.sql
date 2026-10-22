@@ -11,12 +11,18 @@
 -- миграций и ставит `alter default privileges`, поэтому новые таблицы в
 -- public получают их сами. Явных grant здесь нет намеренно.
 
+-- Валюта — text с проверкой длины, а не varchar(N). Разница не
+-- стилистическая: тип с длиной режет молча при приведении
+-- ('USDT'::char(3) отдаёт 'USD', 'ОЧЕНЬДЛИННАЯ'::varchar(10) — первые
+-- десять символов), а text резать нечем, и слишком длинное значение
+-- отбивает проверка — громко и в момент записи.
+
 CREATE TABLE public.accounts (
     id uuid DEFAULT uuidv7() NOT NULL,
     user_id uuid NOT NULL,
     provider text NOT NULL,
     kind text NOT NULL,
-    base_currency character varying(10) NOT NULL,
+    base_currency text NOT NULL,
     is_iis boolean DEFAULT false NOT NULL,
     created_at timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     name text,
@@ -27,7 +33,7 @@ CREATE TABLE public.instruments (
     id uuid DEFAULT uuidv7() NOT NULL,
     symbol text NOT NULL,
     class text NOT NULL,
-    currency character varying(10) NOT NULL,
+    currency text NOT NULL,
     created_at timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT instruments_currency_length CHECK (((length((currency)::text) >= 3) AND (length((currency)::text) <= 10)))
 );
@@ -40,7 +46,7 @@ CREATE TABLE public.trades (
     quantity numeric(38,18) NOT NULL,
     price numeric(28,8) NOT NULL,
     fee numeric(28,8) NOT NULL,
-    fee_currency character varying(10) NOT NULL,
+    fee_currency text NOT NULL,
     executed_at timestamp(6) with time zone NOT NULL,
     provider text NOT NULL,
     external_id text,

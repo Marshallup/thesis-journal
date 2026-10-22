@@ -17,13 +17,19 @@ begin
 end;
 $$;
 
+-- Валюта — text с проверкой длины, а не varchar(N). Разница не
+-- стилистическая: тип с длиной режет молча при приведении
+-- ('USDT'::char(3) отдаёт 'USD', 'ОЧЕНЬДЛИННАЯ'::varchar(10) — первые
+-- десять символов), а text резать нечем, и слишком длинное значение
+-- отбивает проверка — громко и в момент записи.
+
 CREATE TABLE public.cash_ledger (
     id uuid DEFAULT uuidv7() NOT NULL,
     account_id uuid NOT NULL,
     instrument_id uuid,
     kind text NOT NULL,
     amount numeric(28,8) NOT NULL,
-    currency character varying(10) NOT NULL,
+    currency text NOT NULL,
     occurred_at timestamp(6) with time zone NOT NULL,
     provider text NOT NULL,
     external_id text,
