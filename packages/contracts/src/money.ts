@@ -1,9 +1,7 @@
 import { Decimal } from 'decimal.js'
 
-// An isolated constructor rather than Decimal.set: the configuration stays
-// inside Money. Decimal.set mutates the library globally, so any other code in
-// the process would inherit our precision, and its own Decimal.set would break
-// our toString().
+// Isolated constructor, not Decimal.set: the latter mutates the library
+// globally, so our precision would leak and theirs would break ours.
 const D = Decimal.clone({ precision: 40, toExpNeg: -30, toExpPos: 40 })
 
 export class Money {

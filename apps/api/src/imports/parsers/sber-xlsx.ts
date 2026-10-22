@@ -4,8 +4,7 @@ import readXlsxFile from 'read-excel-file/node'
 
 type CashKind = 'dividend' | 'coupon' | 'tax' | 'deposit' | 'fee'
 
-// Класс нужен не для красоты: инструмент в справочнике уникален по паре
-// (symbol, class), и без класса импорту нечем получить instrumentId.
+// Инструмент уникален по паре (symbol, class) — без класса не найти его id.
 export type InstrumentClass = 'equity' | 'bond' | 'etf' | 'crypto' | 'currency'
 
 export type RawOperation = {
@@ -30,36 +29,30 @@ type Sheet = { rows: Cell[][]; cell: (row: Cell[], column: string) => Cell }
 const TRADES_SHEET = 'Сделки'
 const CASH_SHEET = 'Движение ДС'
 
-// Числа ячеек забираются строкой, как они лежат в XML, и дальше их принимает
-// `Money`. Без этого число успело бы побывать двоичным float — для денег это
-// потеря точности в самом начале пути, до единой нашей строчки.
+// Число ячейки забираем строкой из XML: иначе деньги побывали бы float
+// ещё до первой нашей строчки.
 const RAW_NUMBERS = { parseNumber: (value: string): string => value }
 
 const SIDES: Record<string, 'buy' | 'sell'> = { Покупка: 'buy', Продажа: 'sell' }
 
-// В настоящей выгрузке за год встретилось одно значение — «Акция». Остальные
-// названия Сбера неизвестны, и угадывать их нельзя: неверный класс разводит
-// сделки по одной бумаге на два инструмента, а молчаливого способа это заметить
-// нет. Поэтому незнакомый тип падает, как незнакомая операция.
+// В выгрузке за год встретилось одно значение. Угадывать остальные нельзя:
+// неверный класс молча разведёт одну бумагу на два инструмента.
 const INSTRUMENT_CLASSES: Record<string, InstrumentClass> = { Акция: 'equity' }
 
-// Названия сняты с настоящей выгрузки. Знак — наш: в файле сумма всегда
-// положительная, направление несёт только название операции, а сумма ledger
-// должна сходиться с балансом, значит списание обязано быть отрицательным.
+// Названия сняты с выгрузки. Знак наш: в файле сумма всегда положительная,
+// а сумма ledger должна сходиться с балансом.
 const CASH_KINDS: Record<string, { cashKind: CashKind; outgoing: boolean }> = {
   'Пополнение счёта': { cashKind: 'deposit', outgoing: false },
   'Выплата дивидендов': { cashKind: 'dividend', outgoing: false },
   Комиссия: { cashKind: 'fee', outgoing: true },
 }
 
-// Последняя копейка в «Объеме сделки» может быть округлена, и это нормально.
-// Расхождение больше копейки — уже не округление: так выглядит облигация
-// (котируется в процентах от номинала, плюс НКД), инструмент с лотом не в одну
-// бумагу или съехавшая колонка.
+// Копейка — округление, больше — облигация (цена в процентах от номинала),
+// лот не в одну бумагу или съехавшая колонка.
 const VOLUME_TOLERANCE = '0.01'
 
-// Статусы тоже сняты с выгрузки, и там встретился ровно один. Неизвестный
-// статус — это не «пропустить строку»: деньги могли двинуться, а могли и нет.
+// Статус встретился ровно один. Незнакомый пропускать нельзя: неизвестно,
+// двинулись деньги или нет.
 const EXECUTED = 'Исполнена'
 
 const MOSCOW = 'Europe/Moscow'
@@ -74,11 +67,9 @@ const moscowClock = new Intl.DateTimeFormat('en-GB', {
   second: '2-digit',
 })
 
-// Москва не переводит часы с 2014 года, но смещение всё равно считается через
-// Intl: в выгрузке за 2013-й оно другое, а «плюс три часа» об этом не знает.
-// На вход приходит целая секунда — это обеспечивает wallClock. Иначе остаток
-// миллисекунд уехал бы в смещение: Intl отдаёт стенные часы без миллисекунд,
-// и разница считалась бы с огрызком.
+// Через Intl, а не «плюс три часа»: в выгрузке за 2013-й смещение другое.
+// На вход — целая секунда (это обеспечивает wallClock), иначе остаток
+// миллисекунд уехал бы в смещение.
 function moscowShiftMs(instant: number): number {
   const parts = new Map(moscowClock.formatToParts(new Date(instant)).map((p) => [p.type, p.value]))
   const at = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.get(type))
@@ -93,19 +84,16 @@ function moscowShiftMs(instant: number): number {
   return wall - instant
 }
 
-// Вход — стенные часы Москвы, выход — момент в UTC. Смещение берётся дважды:
-// первое приближение — на самих стенных часах, уточнение — на уже сдвинутом
-// моменте, иначе в сутки перевода часов время уезжает на час.
+// Стенные часы Москвы → момент в UTC. Смещение берётся дважды: иначе в сутки
+// перевода часов время уезжает на час.
 function moscowWallToUtc(wall: number): string {
   const shift = moscowShiftMs(wall - moscowShiftMs(wall))
   return new Date(wall - shift).toISOString()
 }
 
-// Дату библиотека собирает из серийного числа Excel сама, и UTC-поля
-// получившегося Date несут стенные часы файла, а не момент в UTC. Пересчёт идёт
-// float-арифметикой с floor в конце, поэтому целая секунда приходит на
-// миллисекунду короче; секунды в выгрузке целые, и округление до секунды
-// возвращает ровно то, что записано в файле.
+// UTC-поля Date несут стенные часы файла, а не момент в UTC. Пересчёт идёт
+// float-арифметикой с floor, поэтому секунда приходит на миллисекунду короче —
+// округляем обратно.
 function wallClock(value: Cell, column: string): number {
   if (value instanceof Date) return Math.round(value.getTime() / 1000) * 1000
   throw new Error(`колонка «${column}»: ожидалась дата, пришло ${JSON.stringify(value)}`)
@@ -123,8 +111,7 @@ function text(value: Cell): string {
   return value == null ? '' : String(value).trim()
 }
 
-// Колонки ищутся по названию, а не по позиции: порядок между версиями выгрузки
-// плавает, а пропавшее название падает сразу и называет себя.
+// По названию, а не по позиции: порядок колонок между версиями плавает.
 function sheetOf(sheets: Map<string, Cell[][]>, name: string): Sheet {
   const data = sheets.get(name)
   if (!data) throw new Error(`в файле нет листа «${name}» — это не выгрузка операций Сбера`)
@@ -142,10 +129,8 @@ function sheetOf(sheets: Map<string, Cell[][]>, name: string): Sheet {
   }
 }
 
-// Цена и количество — всё, что парсер знает о сделке, и «Объем сделки» в том же
-// листе даёт единственную возможность их проверить. Молча занести сделку, у
-// которой произведение не сходится с объёмом, значит занести неверную
-// себестоимость: у облигации — без НКД и в сто раз меньше.
+// «Объем сделки» — единственный способ проверить цену и количество, не выходя
+// из файла. Расхождение означает неверную себестоимость.
 function checkVolume(externalId: string, product: Money, volume: Money): void {
   const drift = product.minus(volume)
   const magnitude = drift.isNegative() ? Money.of('0').minus(drift) : drift
@@ -253,9 +238,8 @@ function parseCash({ rows, cell }: Sheet): RawOperation[] {
 }
 
 export async function parseSberXlsx(file: Buffer): Promise<RawOperation[]> {
-  // Все листы за один проход: readSheet на каждый лист распаковывал бы zip
-  // заново. В типах библиотеки значение ячейки объявлено как `typeof Date`,
-  // то есть конструктор, — это её опечатка, на рантайме приходит экземпляр.
+  // Все листы за один проход: readSheet распаковывал бы zip на каждый.
+  // Приведение — из-за опечатки в типах библиотеки (`typeof Date`).
   const read = await readXlsxFile<string>(file, RAW_NUMBERS)
   const sheets = new Map(read.map((s) => [s.sheet, s.data as unknown as Cell[][]]))
 

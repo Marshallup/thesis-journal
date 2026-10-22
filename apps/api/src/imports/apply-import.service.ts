@@ -7,18 +7,11 @@ import { TradesService } from '../trades/trades.service.ts'
 import { parseSberXlsx } from './parsers/sber-xlsx.ts'
 import type { InstrumentClass, RawOperation } from './parsers/sber-xlsx.ts'
 
-// deferred — продажи, под которые в журнале ещё нет покупок. Не ошибка и не
-// потеря: выгрузка Сбера ограничена годом, поэтому бумага, купленная раньше,
-// в свежий отчёт не попадает физически. Такая продажа ждёт своего отчёта и
-// применится при повторной заливке, когда покупка приедет.
-// quantity — размер самой продажи, missing — чего под неё не хватило. Это
-// разные числа: часть бумаги могла быть куплена внутри периода отчёта, а часть
-// раньше. Человеку нужны оба: первое объясняет, какой сделки нет в журнале,
-// второе — сколько добавить руками, если отчёта за тот год уже не достать.
+// Продажа, под которую ещё нет покупок: ждёт отчёта за прошлый год.
+// quantity — размер продажи, missing — чего не хватило: это разные числа.
 export type DeferredSale = { ticker: string; quantity: string; missing: string }
 
-// То же самое, но с полями, которые нужны строке в базе: инструмент вместо
-// тикера и время операции, чтобы список можно было показать по-человечески.
+// То же плюс поля, которые нужны строке в базе.
 type DeferredRow = DeferredSale & {
   instrumentId: string
   externalId: string
@@ -26,9 +19,8 @@ type DeferredRow = DeferredSale & {
 }
 export type ImportResult = { created: number; skipped: number; deferred: DeferredSale[] }
 
-// Отдельный тип, а не просто ConflictException: проигравший гонку не сделал
-// работы, и в catch его надо отличить от настоящей неудачи импорта — иначе
-// отчёт победителя пометится как провалившийся.
+// Отдельный тип: в catch проигравшего гонку надо отличить от настоящей
+// неудачи, иначе отчёт победителя пометится как провалившийся.
 export class ImportAlreadyRunning extends ConflictException {
   constructor() {
     super({ status: 'already_running' })
@@ -37,9 +29,8 @@ export class ImportAlreadyRunning extends ConflictException {
 
 const ZERO = Money.of('0')
 
-// Парсер гарантирует эти поля у сделки, но в `RawOperation` они опциональны —
-// у денежной операции их нет. Сужаем один раз, чтобы дальше в коде не было
-// восклицательных знаков на каждом поле.
+// У денежной операции этих полей нет, поэтому в RawOperation они опциональны.
+// Сужаем один раз, чтобы дальше не было восклицательных знаков.
 type TradeOperation = {
   side: 'buy' | 'sell'
   ticker: string
@@ -93,19 +84,16 @@ function asCash(op: RawOperation): CashOperation {
   }
 }
 
-// Парсер отдаёт операции в порядке файла — от новых к старым. Применять надо
-// от старых к новым, иначе продажа встретит лоты, которых ещё нет. Второй ключ
-// сортировки нужен для операций, совпавших до секунды: без него повторный
-// импорт мог бы разложить их иначе.
+// Парсер отдаёт операции от новых к старым, а применять надо наоборот:
+// иначе продажа встретит лоты, которых ещё нет. Второй ключ — для совпавших
+// до секунды, чтобы повторный импорт разложил их так же.
 function inOrder<T extends { executedAt: string; externalId: string }>(operations: T[]): T[] {
   return operations.toSorted(
     (a, b) => a.executedAt.localeCompare(b.executedAt) || a.externalId.localeCompare(b.externalId),
   )
 }
 
-// Инструмент создаётся для каждого тикера до транзакции, поэтому промах карты
-// означает ошибку в коде, а не отсутствие данных: пустая строка уехала бы в
-// ::uuid и упала бы в базе непонятным сообщением.
+// Промах карты — ошибка в коде: инструменты создаются до транзакции.
 function instrumentOf(ids: Map<string, string>, ticker: string): string {
   const id = ids.get(ticker)
   if (!id) throw new Error(`инструмент для «${ticker}» не создан`)
@@ -121,8 +109,7 @@ export class ApplyImportService {
     private readonly matching: MatchingService,
   ) {}
 
-  // userId есть в сигнатуре, хотя в плане его не было: без него не прочитать
-  // ни сам импорт, ни счёт — RLS их просто не покажет.
+  // userId обязателен: без него RLS не покажет ни импорт, ни счёт.
   async run(userId: string, importId: string): Promise<ImportResult> {
     const { raw, account } = await this.prisma.withUser(userId, async (tx) => {
       const found = await tx.rawImport.findUniqueOrThrow({ where: { id: importId } })
@@ -141,9 +128,7 @@ export class ApplyImportService {
       const trades = inOrder(operations.filter((op) => op.kind === 'trade').map(asTrade))
       const cash = inOrder(operations.filter((op) => op.kind === 'cash').map(asCash))
 
-      // Справочник инструментов общий и без RLS, поэтому upsert идёт до
-      // импортной транзакции: внутри она держала бы блокировку на общей
-      // таблице весь импорт. Откат оставит инструмент без сделок — безвредно.
+      // До транзакции: иначе импорт держал бы блокировку на общей таблице.
       const instrumentIds = await this.resolveInstruments(trades)
       const { deferred, postponed } = await this.splitUncoveredSales(
         userId,
@@ -158,15 +143,9 @@ export class ApplyImportService {
       let skipped = 0
 
       await this.prisma.withUser(userId, async (tx) => {
-        // `try`, а не блокирующий `pg_advisory_xact_lock`: второй импорт должен
-        // получить отказ сразу, а не встать в очередь и повторить работу,
-        // которую уже делает первый. Блокировка транзакционная — снимается
-        // на коммите или откате сама, освободить её вручную невозможно забыть.
-        //
-        // Ключ — счёт, а не импорт: два разных отчёта по одному счёту
-        // одновременно опасны так же, у них пересекаются лоты и позиции.
-        // `hashtext` даёт int4, и коллизия двух счётов обойдётся лишним
-        // отказом, а не потерянными данными.
+        // `try`: второй импорт получает отказ сразу, а не повторяет работу.
+        // Транзакционная — снимается сама. Ключ по счёту, а не по импорту:
+        // два разных отчёта одного счёта пересекаются по лотам и позициям.
         const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
           select pg_try_advisory_xact_lock(hashtext(${`import:${raw.accountId}`})) as locked
         `
@@ -195,9 +174,7 @@ export class ApplyImportService {
         }
 
         for (const operation of cash) {
-          // Тот же ключ идемпотентности, что у сделок, и та же причина
-          // вставлять одним оператором: повторная заливка не должна
-          // задваивать деньги.
+          // Ключ идемпотентности тот же, что у сделок.
           const inserted = await tx.$queryRaw<{ id: string }[]>`
             insert into cash_ledger
               (account_id, instrument_id, kind, amount, currency,
@@ -215,9 +192,7 @@ export class ApplyImportService {
           else skipped += 1
         }
 
-        // Набор пересчитывается целиком на каждом прогоне: отложенное — это
-        // состояние, а не журнал. Применилось — строка исчезает, появилась
-        // новая непокрытая продажа — появляется.
+        // Отложенное — состояние, а не журнал: набор пересчитывается целиком.
         await tx.deferredOperation.deleteMany({ where: { importId } })
         if (deferred.length > 0) {
           await tx.deferredOperation.createMany({
@@ -240,8 +215,7 @@ export class ApplyImportService {
         })
       })
 
-      // После коммита и по одной сделке: матчинг — отдельная работа, его
-      // ошибка не должна откатывать принятый отчёт.
+      // После коммита: ошибка матчинга не должна откатывать принятый отчёт.
       for (const tradeId of applied) await this.matching.matchTrade(userId, tradeId)
 
       return {
@@ -250,12 +224,10 @@ export class ApplyImportService {
         deferred: deferred.map(({ ticker, quantity, missing }) => ({ ticker, quantity, missing })),
       }
     } catch (error) {
-      // Проигравший гонку ничего не записал, и помечать импорт неудачным
-      // нельзя: его как раз применяет победитель.
+      // Проигравший гонку ничего не записал — метку ставит победитель.
       if (error instanceof ImportAlreadyRunning) throw error
 
-      // Своей транзакцией: импортная уже откачена, и вместе с ней откатилась
-      // бы отметка о неудаче.
+      // Своей транзакцией: импортная уже откачена.
       await this.prisma.withUser(userId, (tx) =>
         tx.rawImport.update({
           where: { id: importId },
@@ -266,9 +238,7 @@ export class ApplyImportService {
     }
   }
 
-  // Экран импорта показывает это списком: что именно ждёт покупок и из какого
-  // отчёта. Без него человек узнаёт об отложенном один раз, в ответе на
-  // применение, и забывает.
+  // Для экрана импорта: что ждёт покупок и из какого отчёта.
   pending(userId: string) {
     return this.prisma.withUser(userId, (tx) =>
       tx.deferredOperation.findMany({ orderBy: { occurredAt: 'desc' } }),
@@ -289,16 +259,9 @@ export class ApplyImportService {
     return ids
   }
 
-  // Период отчёта может начинаться позже покупок: тогда под продажу нет лотов,
-  // и consumeFifo бросил бы «not enough quantity». У Сбера выгрузка ограничена
-  // годом, поэтому для любого, кто инвестирует дольше года, это штатное
-  // состояние первого импорта, а не сбой.
-  //
-  // Поэтому такие продажи откладываются, а остальное применяется: ронять
-  // тридцать три операции из-за одной — не защита, а помеха. Потеря при этом
-  // не возникает: импорт идемпотентен, и отложенная продажа применится при
-  // повторной заливке, когда покупка приедет из отчёта за прошлый год.
-  // Разбор и отвергнутые варианты — docs/unknowns.md, «Продажа, под которую в
+  // Выгрузка Сбера ограничена годом, поэтому продажа без покупок — штатное
+  // состояние первого импорта. Откладываем её, остальное применяем; потери нет,
+  // импорт идемпотентен. Разбор — docs/unknowns.md, «Продажа, под которую в
   // периоде выгрузки нет покупок».
   private async splitUncoveredSales(
     userId: string,
@@ -312,9 +275,7 @@ export class ApplyImportService {
         where: { accountId, qtyRemaining: { gt: '0' } },
         select: { instrumentId: true, qtyRemaining: true },
       }),
-      // Уже импортированные сделки повторно не применятся, и считать их в
-      // балансе нельзя: иначе повторный импорт продажи выглядел бы как
-      // непокрытый, хотя лоты под неё уже списаны.
+      // Уже импортированные в баланс не считаем: их лоты уже списаны.
       imported: await tx.trade.findMany({
         where: { accountId, provider },
         select: { externalId: true },
@@ -341,10 +302,8 @@ export class ApplyImportService {
         held.set(instrumentId, before.plus(quantity))
         continue
       }
-      // Продажа, которой не хватает лотов, откладывается целиком, а не
-      // частично: половина продажи — это выдуманная сделка, которой не было.
-      // Остаток при этом не трогаем: следующие продажи той же бумаги считаются
-      // от настоящего остатка, а не от просевшего в минус.
+      // Откладывается целиком: половина продажи — сделка, которой не было.
+      // Остаток не трогаем, он нужен следующим продажам той же бумаги.
       if (before.lt(quantity)) {
         postponed.add(operation.externalId)
         deferred.push({

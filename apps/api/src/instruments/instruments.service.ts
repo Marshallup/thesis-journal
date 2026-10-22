@@ -14,14 +14,10 @@ export class InstrumentsService {
     return this.prisma.instrument.findMany({ orderBy: { symbol: 'asc' } })
   }
 
-  // Вставка с ON CONFLICT DO NOTHING, а не upsert: у Prisma upsert здесь
-  // разворачивается в чтение и запись двумя запросами, и два параллельных
-  // импорта одного тикера ловят нарушение уникальности. Это не теория —
-  // гоночный тест воспроизводит отказ три раза из трёх, разбор в
-  // docs/incidents.md за 21.10.2026.
-  //
-  // Чтение идёт после вставки и возвращает чужую строку, если тикер успел
-  // появиться: нам нужен инструмент, а не авторство.
+  // ON CONFLICT, а не prisma.upsert: тот разворачивается в чтение и запись, и
+  // два параллельных импорта одного тикера падают на уникальности — проверено
+  // гоночным тестом, разбор в docs/incidents.md. Читаем после вставки: нужен
+  // инструмент, а не авторство.
   async create(dto: CreateInstrument): Promise<Prisma.InstrumentModel> {
     // Нормализация повторяется здесь: сервис зовут и из теста, минуя Zod.
     const { symbol, class: klass, currency } = createInstrumentSchema.parse(dto)
