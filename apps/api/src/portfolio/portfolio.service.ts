@@ -32,8 +32,10 @@ export type PortfolioTotals = {
   fees: string
   dividends: string
   deposits: string
-  // За вычетом всех комиссий, включая уплаченные за ещё не проданные бумаги.
-  net: string
+  // Итог по счёту: реализованное, нереализованное, все комиссии и дивиденды.
+  // От суммы итогов по бумагам отличается ровно на то, что к бумаге не
+  // привязано — депозитарные комиссии и дивиденды без инструмента.
+  totalPnl: string
 }
 
 @Injectable()
@@ -124,7 +126,10 @@ export class PortfolioService {
 
       const byKind = new Map(cash.map((entry) => [entry.kind, Money.of(entry.amount)]))
       const realized = rows.reduce((sum, row) => sum.plus(row.realizedPnl), zero)
+      // Все комиссии счёта, а не только привязанные к бумагам: депозитарную
+      // тоже заплатили.
       const fees = byKind.get('fee') ?? zero
+      const dividends = byKind.get('dividend') ?? zero
       const value = priced.reduce((sum, row) => (row.value ? sum.plus(row.value) : sum), zero)
       const unrealized = priced.reduce(
         (sum, row) => (row.unrealizedPnl ? sum.plus(row.unrealizedPnl) : sum),
@@ -138,9 +143,10 @@ export class PortfolioService {
           unrealizedPnl: unrealized.toString(),
           realizedPnl: realized.toString(),
           fees: fees.toString(),
-          dividends: (byKind.get('dividend') ?? zero).toString(),
+          dividends: dividends.toString(),
           deposits: (byKind.get('deposit') ?? zero).toString(),
-          net: realized.plus(fees).toString(),
+          // Взносы в итог не входят: это не заработок, а принесённые деньги.
+          totalPnl: realized.plus(unrealized).plus(fees).plus(dividends).toString(),
         },
       }
     })

@@ -69,8 +69,11 @@ it('складывает остатки, затраты и реализован�
   // Комиссия в фикстуре одна, на 11.28, и она со знаком минус.
   expect(money(totals.fees)).toBe('-11.28')
   expect(money(totals.dividends)).toBe('340.2')
-  // Итог — это реализованное за вычетом комиссий, а не одно из двух.
-  expect(money(totals.net)).toBe(Money.of(totals.realizedPnl).plus(totals.fees).toString())
+  // Итог — сумма всех составляющих, а не одна из них. Цен в этом прогоне нет,
+  // поэтому нереализованное не участвует.
+  expect(money(totals.totalPnl)).toBe(
+    Money.of(totals.realizedPnl).plus(totals.fees).plus(totals.dividends).toString(),
+  )
 })
 
 it('показывает бумагу с отложенной продажей и помечает её неполной', async () => {

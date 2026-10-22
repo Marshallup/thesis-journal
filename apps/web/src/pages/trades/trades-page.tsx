@@ -18,6 +18,14 @@ type Trade = {
 
 type Instrument = { id: string; symbol: string }
 
+type Totals = {
+  unrealizedPnl: string
+  realizedPnl: string
+  fees: string
+  dividends: string
+  totalPnl: string
+}
+
 export function TradesPage() {
   const { signOut } = useSession()
 
@@ -31,9 +39,14 @@ export function TradesPage() {
     queryKey: ['accounts'],
     queryFn: () => api<{ id: string }[]>('/accounts'),
   })
+  const portfolio = useQuery({
+    queryKey: ['portfolio'],
+    queryFn: () => api<{ totals: Totals }>('/portfolio'),
+  })
 
   const symbols = new Map(instruments.data?.map((item) => [item.id, item.symbol]))
   const noAccounts = accounts.isSuccess && accounts.data.length === 0
+  const totals = portfolio.data?.totals
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
@@ -66,6 +79,50 @@ export function TradesPage() {
           </button>
         </div>
       </header>
+
+      {totals ? (
+        <section className="mt-6 border-y border-rule py-3">
+          <dl className="flex flex-wrap items-baseline gap-x-8 gap-y-1 text-sm">
+            <div className="flex items-baseline gap-2">
+              <dt>Итог по всем счетам</dt>
+              <dd>
+                <Money value={totals.totalPnl} signed />
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <dt className="text-ink-muted">реализовано</dt>
+              <dd>
+                <Money value={totals.realizedPnl} signed />
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <dt className="text-ink-muted">нереализовано</dt>
+              <dd>
+                <Money value={totals.unrealizedPnl} signed />
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <dt className="text-ink-muted">комиссии</dt>
+              <dd>
+                <Money value={totals.fees} signed />
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <dt className="text-ink-muted">дивиденды</dt>
+              <dd>
+                <Money value={totals.dividends} signed />
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-ink-muted">
+            Взносы в итог не входят: это принесённые деньги, а не заработок. Нереализованное
+            считается по последним котировкам, бумага без цены в него не входит.{' '}
+            <Link to="/portfolio" className="text-accent">
+              Разбор по бумагам
+            </Link>
+          </p>
+        </section>
+      ) : null}
 
       {trades.isPending ? <p className="mt-6 text-sm text-ink-muted">Загружаем</p> : null}
 
