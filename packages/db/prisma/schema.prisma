@@ -58,7 +58,7 @@ model Account {
   // Строки, а не enum: добавить провайдера не должно требовать ALTER TYPE.
   provider     String // bybit | bitget | tinvest | sber | manual
   kind         String // exchange | broker | manual | paper
-  baseCurrency String   @map("base_currency") @db.Char(3)
+  baseCurrency String   @map("base_currency") @db.VarChar(10)
   // У ИИС свой горизонт и налоговый режим.
   isIis        Boolean  @default(false) @map("is_iis")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -122,7 +122,7 @@ model Instrument {
   id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   symbol    String
   class     String // equity | bond | etf | crypto | currency
-  currency  String   @db.Char(3)
+  currency  String   @db.VarChar(10)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Один тикер живёт в разных классах: BTCUSDT в крипте и бумага с тем же
@@ -145,7 +145,7 @@ model Trade {
   quantity    Decimal  @db.Decimal(38, 18)
   price       Decimal  @db.Decimal(28, 8)
   fee         Decimal  @db.Decimal(28, 8)
-  feeCurrency String   @map("fee_currency") @db.Char(3)
+  feeCurrency String   @map("fee_currency") @db.VarChar(10)
   executedAt  DateTime @map("executed_at") @db.Timestamptz(6)
   provider    String
   // Ключ идемпотентности импорта: у ручной сделки внешнего идентификатора нет.
@@ -324,7 +324,7 @@ model CashLedger {
   // сумму с балансом. CHECK (amount >= 0) здесь был бы ровно наоборот —
   // он стоит на cash_balances, где остаток и правда не может быть отрицательным.
   amount     Decimal  @db.Decimal(28, 8)
-  currency   String   @db.Char(3)
+  currency   String   @db.VarChar(10)
   // Дата самой операции по отчёту брокера, не дата записи.
   occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
   provider   String
