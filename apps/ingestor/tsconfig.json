@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Nest держит DI на legacy-декораторах и читает типы параметров
+    // конструктора из метаданных. strictPropertyInitialization выключен так же,
+    // как в скаффолде nest new: поля заполняет контейнер, а не конструктор.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
