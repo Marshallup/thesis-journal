@@ -69,7 +69,10 @@ export class PricesConsumer implements OnApplicationBootstrap, OnApplicationShut
   // ON CONFLICT DO NOTHING: если строка уже есть, значит событие обработано, и
   // второй раз цену писать не нужно. Проверка «сначала select» здесь была бы
   // гонкой между двумя экземплярами api.
-  private async apply(eventId: string, event: PriceQuoted): Promise<void> {
+  //
+  // Публичный, потому что его зовёт тест: брокер в тестах не поднимается, а
+  // проверять надо именно эту транзакцию — в ней вся идемпотентность.
+  async apply(eventId: string, event: PriceQuoted): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.$queryRaw<{ id: string }[]>`
         insert into processed_messages (consumer, event_id)
