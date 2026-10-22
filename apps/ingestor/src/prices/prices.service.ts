@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common'
+import { PRICES_TOPIC } from '@thesis/contracts'
+import type { PriceQuoted } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
+import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { MoexClient } from './moex.client.ts'
 
 const SOURCE = 'moex'
@@ -22,7 +25,50 @@ export class PricesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moex: MoexClient,
+    private readonly outbox: OutboxRepository,
   ) {}
+
+  // Цена и событие о ней — одной транзакцией. createManyAndReturn вместо
+  // createMany не ради возврата: он говорит, какие строки **действительно**
+  // вставились, и события уходят только за них. С createMany дубли из
+  // skipDuplicates породили бы события о том, что уже публиковалось.
+  private async store(
+    rows: { instrumentId: string; symbol: string; price: string; quotedAt: Date }[],
+  ): Promise<number> {
+    if (rows.length === 0) return 0
+
+    return this.prisma.$transaction(async (tx) => {
+      const inserted = await tx.providerPrice.createManyAndReturn({
+        data: rows.map(({ instrumentId, price, quotedAt }) => ({
+          instrumentId,
+          source: SOURCE,
+          price,
+          quotedAt,
+        })),
+        skipDuplicates: true,
+        select: { instrumentId: true, price: true, quotedAt: true },
+      })
+
+      const symbols = new Map(rows.map((row) => [row.instrumentId, row.symbol]))
+      await this.outbox.enqueue(
+        tx,
+        inserted.map((row) => ({
+          topic: PRICES_TOPIC,
+          // Ключ — тикер: он выбирает партицию и тем задаёт порядок цен одной
+          // бумаги.
+          key: symbols.get(row.instrumentId) ?? row.instrumentId,
+          payload: {
+            instrumentId: row.instrumentId,
+            symbol: symbols.get(row.instrumentId) ?? '',
+            source: SOURCE,
+            price: row.price.toString(),
+            quotedAt: row.quotedAt.toISOString(),
+          } satisfies PriceQuoted,
+        })),
+      )
+      return inserted.length
+    })
+  }
 
   // Отбор идёт по справочнику инструментов: он заполняется фактом сделки, то
   // есть вопрос «какие котировки нам нужны» уже отвечен покупкой. Справочник
@@ -42,21 +88,11 @@ export class PricesService {
       const instrumentId = wanted.get(quote.symbol)
       return instrumentId ? [{ instrumentId, ...quote }] : []
     })
-    if (rows.length === 0) return { saved: 0, seen: quotes.length }
 
-    // skipDuplicates: вне торгов ISS отдаёт ту же quoted_at, и повторный
-    // прогон не должен ни падать, ни писать второй раз. Торговый календарь
-    // поэтому и не нужен.
-    const { count } = await this.prisma.providerPrice.createMany({
-      data: rows.map(({ instrumentId, price, quotedAt }) => ({
-        instrumentId,
-        source: SOURCE,
-        price,
-        quotedAt,
-      })),
-      skipDuplicates: true,
-    })
-    return { saved: count, seen: quotes.length }
+    // skipDuplicates внутри store: вне торгов ISS отдаёт ту же quoted_at, и
+    // повторный прогон не должен ни падать, ни писать второй раз. Торговый
+    // календарь поэтому и не нужен.
+    return { saved: await this.store(rows), seen: quotes.length }
   }
 
   // Пятиминутный опрос копит только «сегодня», а сделки в отчёте брокера
@@ -92,17 +128,15 @@ export class PricesService {
         continue
       }
 
-      const { count } = await this.prisma.providerPrice.createMany({
-        data: closes.map(({ price, quotedAt }) => ({
+      saved += await this.store(
+        closes.map(({ price, quotedAt }) => ({
           instrumentId: instrument.id,
-          source: SOURCE,
+          symbol: instrument.symbol,
           price,
           quotedAt,
         })),
-        skipDuplicates: true,
-      })
+      )
       filled += 1
-      saved += count
     }
     return { filled, saved }
   }

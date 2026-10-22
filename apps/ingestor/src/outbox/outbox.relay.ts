@@ -1,0 +1,55 @@
+import { Injectable, Logger } from '@nestjs/common'
+import { Interval } from '@nestjs/schedule'
+import { KafkaProducer } from '../kafka/kafka.producer.ts'
+import { OutboxRepository } from './outbox.repository.ts'
+
+// Две секунды: задержка доставки цены в проекцию, которую человек не заметит,
+// а брокер не почувствует.
+const TICK_MS = 2000
+// Партия. Первый прогон с историей даёт тысячи событий, и выгребать их надо
+// частями: одна гигантская отправка держит транзакцию и память.
+const BATCH = 500
+
+@Injectable()
+export class OutboxRelay {
+  private readonly log = new Logger(OutboxRelay.name)
+  // Цикл не должен наезжать на себя: отправка пачки бывает дольше тика.
+  private running = false
+
+  constructor(
+    private readonly outbox: OutboxRepository,
+    private readonly producer: KafkaProducer,
+  ) {}
+
+  @Interval(TICK_MS)
+  async pump(): Promise<void> {
+    if (this.running) return
+    this.running = true
+    try {
+      for (;;) {
+        const events = await this.outbox.pending(BATCH)
+        if (events.length === 0) break
+
+        await this.producer.send(
+          events.map((event) => ({
+            topic: event.topic,
+            key: event.key,
+            value: JSON.stringify(event.payload),
+          })),
+        )
+        // Только после подтверждённой отправки: упасть здесь значит отправить
+        // партию второй раз, а не потерять её.
+        await this.outbox.markPublished(events.map((event) => event.id))
+        this.log.log(`отправлено событий: ${events.length}`)
+
+        if (events.length < BATCH) break
+      }
+    } catch (error) {
+      // Событие осталось неотправленным и уйдёт следующим тиком. Молчать здесь
+      // нельзя: иначе проекция отстаёт, а причина не видна.
+      this.log.warn(`outbox не опорожнён: ${String(error)}`)
+    } finally {
+      this.running = false
+    }
+  }
+}

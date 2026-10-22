@@ -72,6 +72,21 @@ model Account {
   @@schema("public")
 }
 
+// Исходящие события. Пишутся в одной транзакции с данными, отправляются
+// отдельным циклом: см. комментарий в миграции и правило про outbox.
+model OutboxEvent {
+  id          String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  topic       String
+  key         String
+  payload     Json      @db.JsonB
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  // NULL — ещё не отправлено. Это и есть очередь.
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+
+  @@map("outbox_events")
+  @@schema("ingestor")
+}
+
 // Цены, как их отдала биржа: источник истины у того, кто их получает. Пишет и
 // читает только ingestor — у api на эту схему нет прав вовсе.
 model ProviderPrice {
