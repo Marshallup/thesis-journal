@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import { Interval } from '@nestjs/schedule'
+import type { Env } from '../config/env.ts'
 import { KafkaProducer } from '../kafka/kafka.producer.ts'
 import { OutboxRepository } from './outbox.repository.ts'
 
@@ -19,10 +21,14 @@ export class OutboxRelay {
   constructor(
     private readonly outbox: OutboxRepository,
     private readonly producer: KafkaProducer,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   @Interval(TICK_MS)
   async pump(): Promise<void> {
+    // В тестах продюсер не подключён, и отправлять некуда: тест зовёт pump()
+    // напрямую с подменённым продюсером, а по таймеру — не ходит.
+    if (this.config.get('NODE_ENV', { infer: true }) === 'test') return
     if (this.running) return
     this.running = true
     try {

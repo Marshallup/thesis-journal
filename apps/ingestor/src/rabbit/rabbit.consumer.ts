@@ -54,6 +54,11 @@ export class RabbitConsumer implements OnApplicationBootstrap, OnApplicationShut
   }
 
   async onApplicationBootstrap(): Promise<void> {
+    // В тестах наружу не ходим вовсе: правило проекта — живых внешних вызовов
+    // из тестов нет. Отдельного модуля мало: e2e-тесты собирают AppModule
+    // целиком, и без этой проверки они требуют поднятых брокеров (в CI их нет,
+    // а локально они есть — отсюда тесты, зелёные только на моей машине).
+    if (this.config.get('NODE_ENV', { infer: true }) === 'test') return
     const url = this.config.get('RABBITMQ_URL', { infer: true })
     const connection = await amqp.connect(url)
     const channel = await connection.createChannel()

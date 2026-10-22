@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { ConfigService } from '@nestjs/config'
 import { PRICES_TOPIC } from '@thesis/contracts'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { PrismaService } from '../src/db/prisma.service.ts'
 import { OutboxRelay } from '../src/outbox/outbox.relay.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
+import type { Env } from '../src/config/env.ts'
 import type { KafkaProducer, OutgoingMessage } from '../src/kafka/kafka.producer.ts'
 import { withTestDb } from './setup-db.ts'
 
@@ -29,8 +31,12 @@ class FakeProducer {
   }
 }
 
+// Конфиг подменён: по таймеру relay в тестах не ходит (NODE_ENV=test), а
+// здесь pump() зовётся напрямую — проверяется он сам, а не расписание.
+const config = { get: () => 'development' } as unknown as ConfigService<Env, true>
+
 function relayWith(producer: FakeProducer): OutboxRelay {
-  return new OutboxRelay(outbox, producer as unknown as KafkaProducer)
+  return new OutboxRelay(outbox, producer as unknown as KafkaProducer, config)
 }
 
 function priceEvent(price: string): { topic: string; key: string; payload: unknown } {
