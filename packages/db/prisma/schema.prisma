@@ -304,6 +304,24 @@ model DeferredOperation {
   @@map("deferred_operations")
 }
 
+model InstrumentPrice {
+  id           String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  instrumentId String @map("instrument_id") @db.Uuid
+  source       String // moex
+  price        Decimal @db.Decimal(28, 8)
+
+  // Время биржи и время загрузки — разные вопросы: «когда цена была» и «когда
+  // мы о ней узнали». Опоздавшая точка отличается от свежей только первым.
+  quotedAt  DateTime @map("quoted_at") @db.Timestamptz(6)
+  fetchedAt DateTime @default(now()) @map("fetched_at") @db.Timestamptz(6)
+
+  // Последняя цена — это max(quoted_at), поэтому опоздавшая точка ложится в
+  // историю и ничего не затирает: гард не нужен, портить нечего.
+  @@unique([instrumentId, source, quotedAt], name: "instrument_price_identity", map: "instrument_price_identity")
+  @@index([instrumentId, quotedAt(sort: Desc)])
+  @@map("instrument_prices")
+}
+
 model RawImport {
   id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String   @map("account_id") @db.Uuid
