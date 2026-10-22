@@ -106,3 +106,42 @@ it('не показывает чужой портфель', async () => {
 
   expect((await portfolio.summary(mine.userId)).rows).toEqual([])
 })
+
+// Цена приезжает отдельно от сделок, поэтому портфель обязан жить и без неё:
+// бумага без котировки показывается прочерком и в стоимость не входит.
+it('считает стоимость и нереализованный результат по последней цене', async () => {
+  const { userId, accountId } = await seedAccount('valued@example.com')
+  const { importId } = await uploads.upload(
+    userId,
+    accountId,
+    await buildSberOperationsXlsx(),
+    'operations.xlsx',
+  )
+  await imports.run(userId, importId)
+
+  const before = await portfolio.summary(userId)
+  const sberBefore = before.rows.find((row) => row.symbol === 'SBER')
+  expect(sberBefore?.price).toBeNull()
+  expect(sberBefore?.value).toBeNull()
+  expect(money(before.totals.value)).toBe('0')
+
+  const sber = await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'SBER' } })
+  await db.prisma.instrumentPrice.create({
+    data: {
+      instrumentId: sber.id,
+      source: 'moex',
+      price: '300',
+      quotedAt: new Date('2026-10-22T08:00:00Z'),
+    },
+  })
+
+  const after = await portfolio.summary(userId)
+  const sberAfter = after.rows.find((row) => row.symbol === 'SBER')
+
+  // Осталось 8 бумаг, затраты 2006.50 — значит стоимость 2400, нереализовано 393.50.
+  expect(money(sberAfter!.value!)).toBe('2400')
+  expect(money(sberAfter!.unrealizedPnl!)).toBe('393.5')
+  expect(money(after.totals.value)).toBe('2400')
+  // LKOH цены не имеет и в стоимость не попал.
+  expect(after.rows.find((row) => row.symbol === 'LKOH')?.value).toBeNull()
+})

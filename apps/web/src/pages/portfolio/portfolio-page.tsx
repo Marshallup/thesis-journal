@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.ts'
+import { formatMoscowTime } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 
 type Row = {
@@ -12,9 +13,15 @@ type Row = {
   realizedPnl: string
   fees: string
   incomplete: boolean
+  price: string | null
+  quotedAt: string | null
+  value: string | null
+  unrealizedPnl: string | null
 }
 
 type Totals = {
+  value: string
+  unrealizedPnl: string
   realizedPnl: string
   fees: string
   dividends: string
@@ -51,9 +58,8 @@ export function PortfolioPage() {
         </div>
       </header>
       <p className="mt-1 text-sm text-ink-muted">
-        Только то, что посчитано по вашим сделкам: остатки, затраты и реализованный результат.
-        Текущих котировок здесь нет, поэтому нет и переоценки — бумага стоит столько, сколько за неё
-        заплачено.
+        Остатки и затраты посчитаны по вашим сделкам, цены приходят с Московской биржи с задержкой
+        около пятнадцати минут. Бумага без цены показана прочерком и в стоимость портфеля не входит.
       </p>
 
       {portfolio.isPending ? <p className="mt-6 text-sm text-ink-muted">Загружаем</p> : null}
@@ -85,6 +91,15 @@ export function PortfolioPage() {
                 Затраты
               </th>
               <th scope="col" className="h-8 text-right font-medium">
+                Цена
+              </th>
+              <th scope="col" className="h-8 text-right font-medium">
+                Стоимость
+              </th>
+              <th scope="col" className="h-8 text-right font-medium">
+                Нереализовано
+              </th>
+              <th scope="col" className="h-8 text-right font-medium">
                 Реализовано
               </th>
               <th scope="col" className="h-8 text-right font-medium">
@@ -114,6 +129,28 @@ export function PortfolioPage() {
                 <td className="h-8 text-right">
                   <Money value={row.costBasisTotal} />
                 </td>
+                <td className="h-8 text-right">
+                  {row.price ? (
+                    <>
+                      <Money value={row.price} />
+                      {/* Время котировки рядом с числом: важно не только
+                          сколько, но и когда. */}
+                      {row.quotedAt ? (
+                        <span className="ml-2 text-xs text-ink-muted">
+                          {formatMoscowTime(row.quotedAt)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td className="h-8 text-right">{row.value ? <Money value={row.value} /> : '—'}</td>
+                <td
+                  className={`h-8 text-right ${row.unrealizedPnl ? tone(row.unrealizedPnl) : ''}`}
+                >
+                  {row.unrealizedPnl ? <Money value={row.unrealizedPnl} /> : '—'}
+                </td>
                 <td className={`h-8 text-right ${tone(row.realizedPnl)}`}>
                   <Money value={row.realizedPnl} />
                 </td>
@@ -129,6 +166,18 @@ export function PortfolioPage() {
       {totals ? (
         <section className="mt-8 border-t border-rule pt-4 text-sm">
           <dl className="flex flex-col gap-1">
+            <div className="flex justify-between">
+              <dt className="text-ink-muted">Стоимость бумаг с ценой</dt>
+              <dd className="tabular">
+                <Money value={totals.value} />
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-ink-muted">Нереализовано</dt>
+              <dd className={`tabular ${tone(totals.unrealizedPnl)}`}>
+                <Money value={totals.unrealizedPnl} />
+              </dd>
+            </div>
             <div className="flex justify-between">
               <dt className="text-ink-muted">Реализовано по сделкам</dt>
               <dd className={`tabular ${tone(totals.realizedPnl)}`}>

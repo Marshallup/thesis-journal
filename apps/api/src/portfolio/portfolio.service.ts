@@ -13,9 +13,18 @@ export type PortfolioRow = {
   fees: string
   // Есть отложенные продажи — числа по бумаге неполные.
   incomplete: boolean
+  // Последняя известная цена и время биржи. null — цены нет вовсе: такая
+  // бумага показывается прочерком и в стоимость портфеля не входит.
+  price: string | null
+  quotedAt: string | null
+  value: string | null
+  unrealizedPnl: string | null
 }
 
 export type PortfolioTotals = {
+  // Стоимость только тех бумаг, по которым есть цена.
+  value: string
+  unrealizedPnl: string
   realizedPnl: string
   fees: string
   dividends: string
@@ -67,14 +76,55 @@ export class PortfolioService {
       const cash = await tx.$queryRaw<{ kind: string; amount: string }[]>`
         select kind, sum(amount)::text as amount from cash_ledger group by kind
       `
-      const byKind = new Map(cash.map((entry) => [entry.kind, Money.of(entry.amount)]))
+      const prices = new Map(
+        (
+          await tx.$queryRaw<{ instrumentId: string; price: string; quotedAt: Date }[]>`
+            select distinct on (instrument_id)
+                   instrument_id as "instrumentId", price::text, quoted_at as "quotedAt"
+              from instrument_prices
+             order by instrument_id, quoted_at desc
+          `
+        ).map((row) => [row.instrumentId, row]),
+      )
+
       const zero = Money.of('0')
+      // Стоимость и нереализованный результат считаются только там, где цена
+      // есть: выдуманная цена хуже прочерка.
+      const priced = rows.map((row) => {
+        const quote = prices.get(row.instrumentId)
+        if (!quote || Money.of(row.quantity).eq(zero)) {
+          return {
+            ...row,
+            price: quote?.price ?? null,
+            quotedAt: quote?.quotedAt.toISOString() ?? null,
+            value: null,
+            unrealizedPnl: null,
+          }
+        }
+        const value = Money.of(row.quantity).times(quote.price)
+        return {
+          ...row,
+          price: quote.price,
+          quotedAt: quote.quotedAt.toISOString(),
+          value: value.toString(),
+          unrealizedPnl: value.minus(row.costBasisTotal).toString(),
+        }
+      })
+
+      const byKind = new Map(cash.map((entry) => [entry.kind, Money.of(entry.amount)]))
       const realized = rows.reduce((sum, row) => sum.plus(row.realizedPnl), zero)
       const fees = byKind.get('fee') ?? zero
+      const value = priced.reduce((sum, row) => (row.value ? sum.plus(row.value) : sum), zero)
+      const unrealized = priced.reduce(
+        (sum, row) => (row.unrealizedPnl ? sum.plus(row.unrealizedPnl) : sum),
+        zero,
+      )
 
       return {
-        rows,
+        rows: priced,
         totals: {
+          value: value.toString(),
+          unrealizedPnl: unrealized.toString(),
           realizedPnl: realized.toString(),
           fees: fees.toString(),
           dividends: (byKind.get('dividend') ?? zero).toString(),
