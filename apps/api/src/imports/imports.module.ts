@@ -5,12 +5,13 @@ import { InstrumentsModule } from '../instruments/instruments.module.ts'
 import { TradesModule } from '../trades/trades.module.ts'
 import { ApplyImportService } from './apply-import.service.ts'
 import { ImportsController } from './imports.controller.ts'
-import { RawImportService } from './raw-import.service.ts'
+import { ImportsService } from './imports.service.ts'
+import { RabbitPublisher } from './rabbit.publisher.ts'
 
 @Module({
   imports: [DbModule, TradesModule, InstrumentsModule, DecisionsModule],
   controllers: [ImportsController],
-  providers: [RawImportService, ApplyImportService],
-  exports: [RawImportService, ApplyImportService],
+  providers: [RabbitPublisher, ImportsService, ApplyImportService],
+  exports: [ImportsService, ApplyImportService],
 })
 export class ImportsModule {}

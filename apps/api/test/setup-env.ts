@@ -4,6 +4,7 @@ process.env.REDIS_URL ??= 'redis://localhost:6379'
 // Консьюмер в тестах не поднимается, но схема окружения проверяется при
 // импорте app.module.ts — значит значение нужно.
 process.env.KAFKA_BROKERS ??= 'localhost:9092'
+process.env.RABBITMQ_URL ??= 'amqp://thesis:devpassword@localhost:5672'
 process.env.JWT_ACCESS_SECRET ??= 'a'.repeat(32)
 process.env.JWT_REFRESH_SECRET ??= 'r'.repeat(32)
 // Заглушка: настоящий адрес каждый тест получает от Testcontainers и ставит

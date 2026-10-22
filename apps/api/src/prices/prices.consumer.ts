@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config'
 import { KafkaJS } from '@confluentinc/kafka-javascript'
 import { PRICES_TOPIC } from '@thesis/contracts'
 import type { PriceQuoted } from '@thesis/contracts'
+import { ensureTopics } from './kafka.topics.ts'
 import { PrismaService } from '../db/prisma.service.ts'
 import type { Env } from '../config/env.ts'
 
@@ -28,6 +29,9 @@ export class PricesConsumer implements OnApplicationBootstrap, OnApplicationShut
 
   async onApplicationBootstrap(): Promise<void> {
     const brokers = this.config.get('KAFKA_BROKERS', { infer: true })
+    // До подписки: иначе консьюмер уходит в «Unknown topic» и не
+    // возвращается, когда топик наконец появляется.
+    await ensureTopics(brokers, [PRICES_TOPIC])
     const consumer = new Kafka().consumer({
       'bootstrap.servers': brokers,
       'group.id': GROUP,

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { buildSberOperationsXlsx } from '../../../test/fixtures/sber-operations.ts'
+import { buildSberOperationsXlsx } from '../../test/fixtures/sber-operations.ts'
 import { parseSberXlsx } from './sber-xlsx.ts'
 
 const file = await buildSberOperationsXlsx()

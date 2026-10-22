@@ -1,22 +1,28 @@
+import { randomUUID } from 'node:crypto'
 import { Test } from '@nestjs/testing'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { DbModule } from '../src/db/db.module.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
 import { ApplyImportService } from '../src/imports/apply-import.service.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
-import { RawImportService } from '../src/imports/raw-import.service.ts'
-import { buildSberOperationsXlsx } from './fixtures/sber-operations.ts'
-import type { SberFixtureOptions } from './fixtures/sber-operations.ts'
+import { RabbitPublisher } from '../src/imports/rabbit.publisher.ts'
+import { sberOperations } from './fixtures/sber-operations.ts'
 import { withTestDb } from './setup-db.ts'
 
 let db: Awaited<ReturnType<typeof withTestDb>>
 let moduleRef: Awaited<ReturnType<typeof createModule>>
 let service: ApplyImportService
-let uploads: RawImportService
 let prisma: PrismaService
 
+// Публикация команды в тестах подменяется: живых обращений к брокеру из тестов
+// не бывает, а здесь проверяется применение операций, а не доставка.
+const publisher = { send: () => {} }
+
 async function createModule() {
-  const ref = await Test.createTestingModule({ imports: [DbModule, ImportsModule] }).compile()
+  const ref = await Test.createTestingModule({ imports: [DbModule, ImportsModule] })
+    .overrideProvider(RabbitPublisher)
+    .useValue(publisher)
+    .compile()
   await ref.init()
   return ref
 }
@@ -29,10 +35,13 @@ async function seedAccount(email: string) {
   return { userId: user.id, accountId: account.id }
 }
 
-async function uploadFixture(userId: string, accountId: string, options: SberFixtureOptions = {}) {
-  const file = await buildSberOperationsXlsx(options)
-  const { importId } = await uploads.upload(userId, accountId, file, 'operations.xlsx')
-  return importId
+// Импорт создаётся прямо в базе: заливка файла теперь только отправляет
+// команду воркеру, а проверяется здесь гонка двух применений.
+async function seedImport(accountId: string): Promise<string> {
+  const row = await db.prisma.import.create({
+    data: { accountId, source: 'sber', fileHash: randomUUID(), status: 'uploaded' },
+  })
+  return row.id
 }
 
 beforeAll(async () => {
@@ -40,7 +49,6 @@ beforeAll(async () => {
   process.env.APP_DATABASE_URL = db.appUrl
   moduleRef = await createModule()
   service = moduleRef.get(ApplyImportService)
-  uploads = moduleRef.get(RawImportService)
   prisma = moduleRef.get(PrismaService)
 })
 
@@ -53,11 +61,11 @@ afterAll(async () => {
 // настоящая. В задаче 14 её не было: там транзакция была из одной вставки.
 it('при двух одновременных импортах работает ровно один', async () => {
   const { userId, accountId } = await seedAccount('concurrent@example.com')
-  const importId = await uploadFixture(userId, accountId)
+  const importId = await seedImport(accountId)
 
   const outcomes = await Promise.allSettled([
-    service.run(userId, importId),
-    service.run(userId, importId),
+    service.apply(userId, importId, sberOperations()),
+    service.apply(userId, importId, sberOperations()),
   ])
 
   expect(outcomes.map((outcome) => outcome.status).toSorted()).toEqual(['fulfilled', 'rejected'])
@@ -73,7 +81,7 @@ it('при двух одновременных импортах работает
   const { trades, ledger, raw } = await prisma.withUser(userId, async (tx) => ({
     trades: await tx.trade.findMany({ where: { accountId } }),
     ledger: await tx.cashLedger.findMany({ where: { accountId } }),
-    raw: await tx.rawImport.findUniqueOrThrow({ where: { id: importId } }),
+    raw: await tx.import.findUniqueOrThrow({ where: { id: importId } }),
   }))
   expect(new Set(trades.map((trade) => trade.externalId)).size).toBe(trades.length)
   expect(trades).toHaveLength(4)
@@ -89,10 +97,10 @@ it('при двух одновременных импортах работает
 // блокировка транзакционная и снимается на коммите.
 it('последовательный повторный импорт по-прежнему проходит', async () => {
   const { userId, accountId } = await seedAccount('sequential@example.com')
-  const importId = await uploadFixture(userId, accountId)
+  const importId = await seedImport(accountId)
 
-  const first = await service.run(userId, importId)
-  const second = await service.run(userId, importId)
+  const first = await service.apply(userId, importId, sberOperations())
+  const second = await service.apply(userId, importId, sberOperations())
 
   expect(first.created).toBeGreaterThan(0)
   expect(second.created).toBe(0)
@@ -102,13 +110,14 @@ it('последовательный повторный импорт по-пре
 // пересекаются по лотам и позициям так же, как один отчёт сам с собой.
 it('второй отчёт по тому же счёту тоже получает отказ', async () => {
   const { userId, accountId } = await seedAccount('two-reports@example.com')
-  const first = await uploadFixture(userId, accountId)
-  const second = await uploadFixture(userId, accountId, { extraDeposit: true })
+  const first = await seedImport(accountId)
+  const second = await seedImport(accountId)
   expect(second).not.toBe(first)
 
   const outcomes = await Promise.allSettled([
-    service.run(userId, first),
-    service.run(userId, second),
+    service.apply(userId, first, sberOperations()),
+    // Второй отчёт того же счёта: иной по содержимому, такой же валидный.
+    service.apply(userId, second, sberOperations({ extraDeposit: true })),
   ])
 
   expect(outcomes.map((outcome) => outcome.status).toSorted()).toEqual(['fulfilled', 'rejected'])
@@ -118,7 +127,7 @@ it('второй отчёт по тому же счёту тоже получа�
 // отказ гарантирован, и видно, что проигравший не трогает сам импорт.
 it('проигравший не помечает импорт неудачным', async () => {
   const { userId, accountId } = await seedAccount('untouched@example.com')
-  const importId = await uploadFixture(userId, accountId)
+  const importId = await seedImport(accountId)
 
   await db.prisma.$transaction(async (holder) => {
     // Та же функция, что в сервисе: блокирующая вернула бы `void`, который
@@ -128,12 +137,14 @@ it('проигравший не помечает импорт неудачным
     `
     expect(taken?.locked).toBe(true)
 
-    await expect(service.run(userId, importId)).rejects.toMatchObject({ status: 409 })
+    await expect(service.apply(userId, importId, sberOperations())).rejects.toMatchObject({
+      status: 409,
+    })
   })
 
   const raw = await prisma.withUser(userId, (tx) =>
-    tx.rawImport.findUniqueOrThrow({ where: { id: importId } }),
+    tx.import.findUniqueOrThrow({ where: { id: importId } }),
   )
-  expect(raw.status).toBe('pending')
+  expect(raw.status).toBe('uploaded')
   expect(raw.error).toBeNull()
 })

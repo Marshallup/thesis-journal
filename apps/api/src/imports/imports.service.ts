@@ -1,0 +1,131 @@
+import { createHash } from 'node:crypto'
+import { Injectable, Logger } from '@nestjs/common'
+import { IMPORT_PARSE_QUEUE } from '@thesis/contracts'
+import type { ImportParse } from '@thesis/contracts'
+import { PrismaService } from '../db/prisma.service.ts'
+import { RabbitPublisher } from './rabbit.publisher.ts'
+
+export type UploadResult = { importId: string; status: 'uploaded' | 'duplicate' }
+export type ImportResultSummary = { created: number; skipped: number; deferred: number }
+
+export type ImportStatus = {
+  id: string
+  status: string
+  error: string | null
+  result: ImportResultSummary | null
+  createdAt: string
+}
+
+// Источник берётся от счёта: отчёт, залитый в счёт Сбера, — отчёт Сбера.
+// У ручного счёта брокера нет, поэтому остаётся обобщённый csv.
+function sourceOf(provider: string): string {
+  return provider === 'manual' ? 'csv' : provider
+}
+
+@Injectable()
+export class ImportsService {
+  private readonly log = new Logger(ImportsService.name)
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rabbit: RabbitPublisher,
+  ) {}
+
+  // Хеш от содержимого, а не от имени: тот же отчёт под другим именем остаётся
+  // тем же отчётом, а переименованный файл не должен создавать второй импорт.
+  async upload(
+    userId: string,
+    accountId: string,
+    payload: Buffer,
+    _filename: string,
+  ): Promise<UploadResult> {
+    const fileHash = createHash('sha256').update(payload).digest('hex')
+
+    const result = await this.prisma.withUser(userId, async (tx) => {
+      // Явный фильтр по userId, RLS под ним — и это же проверка владения счётом.
+      const account = await tx.account.findFirstOrThrow({ where: { id: accountId, userId } })
+      const source = sourceOf(account.provider)
+
+      // ON CONFLICT DO NOTHING RETURNING: «сначала select, потом insert» здесь
+      // даёт гонку — между проверкой и вставкой влезет параллельная заливка.
+      const inserted = await tx.$queryRaw<{ id: string }[]>`
+        insert into imports (account_id, source, file_hash, status)
+        values (${accountId}::uuid, ${source}, ${fileHash}, 'uploaded')
+        on conflict (account_id, file_hash) do nothing
+        returning id
+      `
+
+      const created = inserted[0]
+      if (created) return { importId: created.id, source, fresh: true }
+
+      // Пусто — значит строку вставил кто-то другой: читаем её, а не падаем.
+      const existing = await tx.import.findUniqueOrThrow({
+        where: { import_idempotency: { accountId, fileHash } },
+      })
+      return { importId: existing.id, source, fresh: false }
+    })
+
+    if (!result.fresh) return { importId: result.importId, status: 'duplicate' }
+
+    // Байты уезжают в команде. Решено 22.10: отчёт Сбера — сотни килобайт,
+    // брокер их вынесет, а объектное хранилище ради одного файла в неделю —
+    // третий сервис в compose. Потолок держит контроллер; при первом отчёте на
+    // десятки мегабайт понадобится хранилище, запись в docs/unknowns.md.
+    const command: ImportParse = {
+      importId: result.importId,
+      accountId,
+      userId,
+      source: result.source,
+      fileHash,
+      payloadBase64: payload.toString('base64'),
+    }
+    this.rabbit.send(IMPORT_PARSE_QUEUE, command)
+    this.log.log(`импорт ${result.importId}: команда на разбор отправлена`)
+
+    return { importId: result.importId, status: 'uploaded' }
+  }
+
+  // Повторный разбор: байты уже у воркера, гонять файл второй раз незачем.
+  // Нужен, когда разбор отказал по исправимой причине — например, добавили
+  // недостающую покупку руками и хотят применить отчёт заново.
+  async reparse(userId: string, importId: string): Promise<ImportStatus> {
+    const row = await this.prisma.withUser(userId, async (tx) => {
+      const found = await tx.import.findUniqueOrThrow({ where: { id: importId } })
+      await tx.import.update({
+        where: { id: importId },
+        data: { status: 'uploaded', error: null },
+      })
+      return found
+    })
+
+    this.rabbit.send(IMPORT_PARSE_QUEUE, {
+      importId,
+      accountId: row.accountId,
+      userId,
+      source: row.source,
+      fileHash: row.fileHash,
+    } satisfies ImportParse)
+
+    return {
+      id: row.id,
+      status: 'uploaded',
+      error: null,
+      result: null,
+      createdAt: row.createdAt.toISOString(),
+    }
+  }
+
+  // Статус для экрана: разбор асинхронный, и человеку надо видеть, на чём он.
+  async status(userId: string, importId: string): Promise<ImportStatus> {
+    const row = await this.prisma.withUser(userId, (tx) =>
+      tx.import.findUniqueOrThrow({ where: { id: importId } }),
+    )
+    return {
+      id: row.id,
+      status: row.status,
+      error: row.error,
+      result: (row.result as ImportResultSummary | null) ?? null,
+      createdAt: row.createdAt.toISOString(),
+    }
+  }
+}

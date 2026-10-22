@@ -1,26 +1,10 @@
 import { createHash } from 'node:crypto'
 import { Money } from '@thesis/contracts'
+import type { CashKind, InstrumentClass, RawOperation } from '@thesis/contracts'
 import readXlsxFile from 'read-excel-file/node'
 
-type CashKind = 'dividend' | 'coupon' | 'tax' | 'deposit' | 'fee'
-
-// Инструмент уникален по паре (symbol, class) — без класса не найти его id.
-export type InstrumentClass = 'equity' | 'bond' | 'etf' | 'crypto' | 'currency'
-
-export type RawOperation = {
-  kind: 'trade' | 'cash'
-  side?: 'buy' | 'sell'
-  ticker?: string
-  instrumentClass?: InstrumentClass
-  quantity?: string
-  price?: string
-  fee?: string
-  currency: string
-  amount?: string
-  cashKind?: CashKind
-  executedAt: string
-  externalId: string
-}
+// Типы операций переехали в contracts: с разделением сервисов они перестали
+// быть внутренним делом парсера и стали контрактом между ingestor и api.
 
 // Значение ячейки после разбора: число приходит сырой строкой, см. RAW_NUMBERS.
 type Cell = string | boolean | Date | null

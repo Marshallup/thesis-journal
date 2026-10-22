@@ -8,6 +8,7 @@ export const envSchema = z.object({
   REDIS_URL: z.url(),
   // Список через запятую, как его ждёт librdkafka: это не URL.
   KAFKA_BROKERS: z.string().min(1),
+  RABBITMQ_URL: z.url(),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),

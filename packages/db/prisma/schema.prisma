@@ -344,9 +344,9 @@ model DeferredOperation {
   id        String @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String @map("account_id") @db.Uuid
   // Импорт, из которого операция приехала: его же и переприменяют, когда
-  // покупка появилась. Связь настоящая — обе таблицы в схеме core.
-  importId  String    @map("import_id") @db.Uuid
-  rawImport RawImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  // покупка появилась. Связь настоящая — обе таблицы в схеме api.
+  importId  String @map("import_id") @db.Uuid
+  import    Import @relation(fields: [importId], references: [id], onDelete: Cascade)
 
   instrumentId String @map("instrument_id") @db.Uuid
   // Номер сделки из отчёта. Он же ключ идемпотентности сделки, когда она
@@ -389,21 +389,42 @@ model InstrumentPrice {
   @@schema("public")
 }
 
-model RawImport {
+// Импорт с точки зрения человека: статус и ошибка. Байты отчёта живут в схеме
+// воркера — он их получает и он ими владеет.
+model Import {
   id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String   @map("account_id") @db.Uuid
   source    String // sber | csv | bybit | tinvest
   // sha256 от содержимого, не от имени: один и тот же отчёт под другим именем
   // остаётся тем же отчётом.
   fileHash  String   @map("file_hash")
-  payload   Bytes
-  status    String // pending | parsed | failed
+  // uploaded | parsing | parsed | failed — закрытый список, CHECK в базе.
+  status    String
   error     String?
+  // Итог применения: создано, пропущено, отложено. Хранится потому, что
+  // применение асинхронное и спросить «чем кончилось» больше не у кого.
+  result    Json?    @db.JsonB
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   deferred DeferredOperation[]
 
-  @@unique([accountId, fileHash], name: "raw_import_idempotency", map: "raw_import_idempotency")
-  @@map("raw_imports")
+  @@unique([accountId, fileHash], name: "import_idempotency", map: "import_idempotency")
+  @@map("imports")
   @@schema("public")
+}
+
+// Сырьё отчёта. Без внешнего ключа на imports: связь между схемами сервисов
+// жёсткой быть не должна.
+model RawImport {
+  id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  // Имя индекса задано явно: иначе Prisma ждёт своё (raw_imports_import_id_key)
+  // и считает расхождением то, что написано в миграции.
+  importId  String   @unique(map: "raw_import_per_import") @map("import_id") @db.Uuid
+  source    String
+  fileHash  String   @map("file_hash")
+  payload   Bytes
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("raw_imports")
+  @@schema("ingestor")
 }

@@ -1,25 +1,33 @@
+import { randomUUID } from 'node:crypto'
 import { Test } from '@nestjs/testing'
 import { Money } from '@thesis/contracts'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { DbModule } from '../src/db/db.module.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
 import { ApplyImportService } from '../src/imports/apply-import.service.ts'
-import { RawImportService } from '../src/imports/raw-import.service.ts'
 import { PortfolioModule } from '../src/portfolio/portfolio.module.ts'
 import { PortfolioService } from '../src/portfolio/portfolio.service.ts'
-import { buildSberOperationsXlsx } from './fixtures/sber-operations.ts'
+import { RabbitPublisher } from '../src/imports/rabbit.publisher.ts'
+import { sberOperations } from './fixtures/sber-operations.ts'
+import type { SberFixtureOptions } from './fixtures/sber-operations.ts'
 import { withTestDb } from './setup-db.ts'
 
 let db: Awaited<ReturnType<typeof withTestDb>>
 let moduleRef: Awaited<ReturnType<typeof createModule>>
 let portfolio: PortfolioService
 let imports: ApplyImportService
-let uploads: RawImportService
+
+// Публикация команды в тестах подменяется: живых обращений к брокеру из тестов
+// не бывает, а здесь проверяется применение операций, а не доставка.
+const publisher = { send: () => {} }
 
 async function createModule() {
   const ref = await Test.createTestingModule({
     imports: [DbModule, ImportsModule, PortfolioModule],
-  }).compile()
+  })
+    .overrideProvider(RabbitPublisher)
+    .useValue(publisher)
+    .compile()
   await ref.init()
   return ref
 }
@@ -40,7 +48,6 @@ beforeAll(async () => {
   moduleRef = await createModule()
   portfolio = moduleRef.get(PortfolioService)
   imports = moduleRef.get(ApplyImportService)
-  uploads = moduleRef.get(RawImportService)
 })
 
 afterAll(async () => {
@@ -48,15 +55,23 @@ afterAll(async () => {
   await db.stop()
 })
 
+// Было «залить файл и применить». Разбор уехал в ingestor, поэтому импорт
+// создаётся строкой, а применение получает готовые операции.
+async function importFixture(
+  userId: string,
+  accountId: string,
+  options: SberFixtureOptions = {},
+): Promise<string> {
+  const row = await db.prisma.import.create({
+    data: { accountId, source: 'sber', fileHash: randomUUID(), status: 'uploaded' },
+  })
+  await imports.apply(userId, row.id, sberOperations(options))
+  return row.id
+}
+
 it('складывает остатки, затраты и реализованный результат по бумагам', async () => {
   const { userId, accountId } = await seedAccount('portfolio@example.com')
-  const { importId } = await uploads.upload(
-    userId,
-    accountId,
-    await buildSberOperationsXlsx(),
-    'operations.xlsx',
-  )
-  await imports.run(userId, importId)
+  await importFixture(userId, accountId)
 
   const { rows, totals, accounts, byCurrency } = await portfolio.summary(userId)
   const sber = rows.find((row) => row.symbol === 'SBER')
@@ -80,13 +95,7 @@ it('складывает остатки, затраты и реализован�
 
 it('показывает бумагу с отложенной продажей и помечает её неполной', async () => {
   const { userId, accountId } = await seedAccount('incomplete@example.com')
-  const { importId } = await uploads.upload(
-    userId,
-    accountId,
-    await buildSberOperationsXlsx({ uncoveredSell: true }),
-    'operations.xlsx',
-  )
-  await imports.run(userId, importId)
+  await importFixture(userId, accountId, { uncoveredSell: true })
 
   const { rows } = await portfolio.summary(userId)
   const gmkn = rows.find((row) => row.symbol === 'GMKN')
@@ -101,13 +110,7 @@ it('показывает бумагу с отложенной продажей �
 it('не показывает чужой портфель', async () => {
   const mine = await seedAccount('mine-portfolio@example.com')
   const other = await seedAccount('other-portfolio@example.com')
-  const { importId } = await uploads.upload(
-    other.userId,
-    other.accountId,
-    await buildSberOperationsXlsx(),
-    'operations.xlsx',
-  )
-  await imports.run(other.userId, importId)
+  await importFixture(other.userId, other.accountId)
 
   expect((await portfolio.summary(mine.userId)).rows).toEqual([])
 })
@@ -116,13 +119,7 @@ it('не показывает чужой портфель', async () => {
 // бумага без котировки показывается прочерком и в стоимость не входит.
 it('считает стоимость и нереализованный результат по последней цене', async () => {
   const { userId, accountId } = await seedAccount('valued@example.com')
-  const { importId } = await uploads.upload(
-    userId,
-    accountId,
-    await buildSberOperationsXlsx(),
-    'operations.xlsx',
-  )
-  await imports.run(userId, importId)
+  await importFixture(userId, accountId)
 
   const before = await portfolio.summary(userId)
   const sberBefore = before.rows.find((row) => row.symbol === 'SBER')

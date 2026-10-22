@@ -12,6 +12,7 @@ import { QuietLogger } from './config/quiet-logger.ts'
 import type { Env } from './config/env.ts'
 import { DecisionsModule } from './decisions/decisions.module.ts'
 import { HealthModule } from './health/health.module.ts'
+import { ImportsConsumerModule } from './imports/imports-consumer.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
 import { InstrumentsModule } from './instruments/instruments.module.ts'
 import { PortfolioModule } from './portfolio/portfolio.module.ts'
@@ -82,6 +83,7 @@ import { TradesModule } from './trades/trades.module.ts'
     InstrumentsModule,
     AccountsModule,
     ImportsModule,
+    ImportsConsumerModule,
     PortfolioModule,
     PricesModule,
     PricesConsumerModule,

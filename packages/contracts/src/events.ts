@@ -1,3 +1,5 @@
+import type { RawOperation } from './operations.ts'
+
 // События между сервисами. Лежат в contracts, потому что у события два конца:
 // издатель в ingestor и потребитель в api, и разойтись они не должны молча.
 //
@@ -19,4 +21,41 @@ export type PriceQuoted = {
   price: string
   // ISO UTC, время биржи — не время получения.
   quotedAt: string
+}
+
+// Команда: «разбери этот отчёт». RabbitMQ, потому что это задание одному
+// исполнителю, а не факт для всех желающих.
+export const IMPORT_PARSE_QUEUE = 'import.parse'
+
+export type ImportParse = {
+  importId: string
+  accountId: string
+  // Владелец данных. Едет сквозь всю цепочку потому, что применять операции
+  // придётся под RLS, а у консьюмера нет сессии и спросить пользователя
+  // неоткуда. Альтернатива — роль, обходящая RLS, — хуже: она сняла бы второй
+  // рубеж защиты со всего пути применения.
+  userId: string
+  source: string
+  // sha256 содержимого: воркер кладёт его рядом с байтами, чтобы сырьё можно
+  // было опознать, не спрашивая api.
+  fileHash: string
+  // Байты отчёта в base64 — при первой отправке. При повторном разборе их нет:
+  // сырьё уже лежит у воркера, и гонять файл второй раз незачем.
+  payloadBase64?: string
+}
+
+// Событие: «отчёт разобран». Kafka, потому что это факт, и потребителей у него
+// со временем станет больше одного.
+export const IMPORT_PARSED_TOPIC = 'import.parsed.v1'
+
+export type ImportParsed = {
+  importId: string
+  accountId: string
+  userId: string
+  source: string
+  // Пусто и error заполнен — разбор отказал. Отдельного топика под отказ нет:
+  // потребитель один и тот же, и ему важно не «что случилось», а «что теперь
+  // с этим импортом».
+  operations: RawOperation[]
+  error?: string
 }

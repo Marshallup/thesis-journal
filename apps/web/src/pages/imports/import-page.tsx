@@ -17,10 +17,31 @@ type Pending = {
   missing: string
   occurredAt: string
 }
-type Upload = { importId: string; status: 'pending' | 'duplicate' }
-type DeferredSale = { ticker: string; quantity: string; missing: string }
-type Result = { created: number; skipped: number; deferred: DeferredSale[] }
-type Applied = Result & { duplicate: boolean }
+type Upload = { importId: string; status: 'uploaded' | 'duplicate' }
+type ImportResult = { created: number; skipped: number; deferred: number }
+type ImportStatus = {
+  id: string
+  status: 'uploaded' | 'parsing' | 'parsed' | 'failed'
+  error: string | null
+  result: ImportResult | null
+}
+type Applied = ImportStatus & { duplicate: boolean }
+
+// Разбор идёт в другом процессе, поэтому экран ждёт и спрашивает. Тридцать
+// секунд: отчёт за год разбирается за пару, а если не уложились — виноват не
+// таймаут, и честнее сказать это прямо, чем крутить спиннер.
+const WAIT_MS = 30_000
+const POLL_MS = 1000
+
+async function waitForImport(importId: string): Promise<ImportStatus> {
+  const until = Date.now() + WAIT_MS
+  for (;;) {
+    const status = await api<ImportStatus>(`/imports/${importId}`)
+    if (status.status === 'parsed' || status.status === 'failed') return status
+    if (Date.now() > until) return status
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+  }
+}
 
 // Отказы бэкенда, которые человек должен понять без чтения логов. 409 приходит
 // без текста — это состояние, а не ошибка формы; у 400 текст есть, и он
@@ -57,12 +78,12 @@ export function ImportPage() {
       form.append('file', file)
       form.append('accountId', accountId)
 
-      // Два запроса, а не один: заливка сохраняет отчёт целиком, применение
-      // разбирает. Если разбор упадёт, файл уже лежит на сервере, и повторять
-      // придётся только применение.
+      // Заливка только принимает файл: разбирает его воркер, а применяет
+      // консьюмер событий. Поэтому второй шаг — не «примени», а «подожди и
+      // спроси, чем кончилось».
       const uploaded = await api<Upload>('/imports', { method: 'POST', body: form })
-      const applied = await api<Result>(`/imports/${uploaded.importId}/apply`, { method: 'POST' })
-      return { ...applied, duplicate: uploaded.status === 'duplicate' }
+      const status = await waitForImport(uploaded.importId)
+      return { ...status, duplicate: uploaded.status === 'duplicate' }
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['trades'] })
@@ -74,7 +95,10 @@ export function ImportPage() {
   // загружать его второй раз незачем — именно этого не хватало, когда
   // отложенная продажа ждала покупки.
   const reapply = useMutation({
-    mutationFn: (importId: string) => api<Result>(`/imports/${importId}/apply`, { method: 'POST' }),
+    mutationFn: async (importId: string) => {
+      await api<ImportStatus>(`/imports/${importId}/apply`, { method: 'POST' })
+      return waitForImport(importId)
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['trades'] })
       await queryClient.invalidateQueries({ queryKey: ['imports', 'deferred'] })
@@ -188,45 +212,57 @@ export function ImportPage() {
       <div aria-live="polite" className="mt-6">
         {send.isSuccess ? (
           <div className="border-t border-rule pt-3 text-sm">
-            <p className="tabular">
-              Создано {send.data.created}, пропущено {send.data.skipped}
-            </p>
-            <p className="mt-1 text-ink-muted">
-              {send.data.duplicate
-                ? 'Этот файл уже загружался. Применили его снова — пропущенное и есть то, что было в журнале.'
-                : send.data.created === 0
-                  ? 'Новых операций в отчёте не оказалось: всё уже было записано раньше.'
-                  : 'Сделки, лоты, позиции и движения денег записаны.'}
-            </p>
-            {send.data.deferred.length > 0 ? (
-              // Не ошибка и не потеря: продажа ждёт своей покупки и применится
-              // при повторной заливке. Говорим прямо, иначе человек решит, что
-              // импорт съел сделку.
-              <div className="mt-3 border-t border-rule pt-3">
-                <p>
-                  Отложено до появления покупок:{' '}
-                  <span className="tabular">
-                    {send.data.deferred
-                      .map(
-                        (sale) =>
-                          `${sale.ticker}: продажа ${sale.quantity}, не хватает ${sale.missing}`,
-                      )
-                      .join('; ')}
-                  </span>
+            {send.data.status === 'failed' ? (
+              // Отказ разбора приходит событием и лежит в статусе: это причина
+              // от парсера, а не наш пересказ.
+              <p role="alert" className="text-loss">
+                Разбор отказал: {send.data.error ?? 'причина не записана'}
+              </p>
+            ) : send.data.status === 'parsed' && send.data.result ? (
+              <>
+                <p className="tabular">
+                  Создано {send.data.result.created}, пропущено {send.data.result.skipped}
                 </p>
                 <p className="mt-1 text-ink-muted">
-                  Часть этих бумаг куплена раньше периода отчёта, и списывать продажу не с чего —
-                  поэтому она отложена целиком, а купленное внутри периода пока числится в портфеле.
-                  Залейте отчёт за тот год — выгрузка Сбера ограничена годом, поэтому отчётов будет
-                  несколько, и начинать надо со старого. Если того года в кабинете уже нет,{' '}
-                  <Link to="/trades/new" className="text-accent">
-                    добавьте открывающую покупку вручную
-                  </Link>
-                  . Потом залейте этот же файл снова — отложенные продажи применятся, дубли не
-                  появятся.
+                  {send.data.duplicate
+                    ? 'Этот файл уже загружался. Применили его снова — пропущенное и есть то, что было в журнале.'
+                    : send.data.result.created === 0
+                      ? 'Новых операций в отчёте не оказалось: всё уже было записано раньше.'
+                      : 'Сделки, лоты, позиции и движения денег записаны.'}
                 </p>
-              </div>
-            ) : null}
+                {send.data.result.deferred > 0 ? (
+                  // Не ошибка и не потеря: продажа ждёт своей покупки и
+                  // применится при повторном разборе. Говорим прямо, иначе
+                  // человек решит, что импорт съел сделку.
+                  <div className="mt-3 border-t border-rule pt-3">
+                    <p>
+                      Отложено до появления покупок:{' '}
+                      <span className="tabular">{send.data.result.deferred}</span>. Подробности — в
+                      списке ниже.
+                    </p>
+                    <p className="mt-1 text-ink-muted">
+                      Часть этих бумаг куплена раньше периода отчёта, и списывать продажу не с чего
+                      — поэтому она отложена целиком, а купленное внутри периода пока числится в
+                      портфеле. Залейте отчёт за тот год — выгрузка Сбера ограничена годом, поэтому
+                      отчётов будет несколько, и начинать надо со старого. Если того года в кабинете
+                      уже нет,{' '}
+                      <Link to="/trades/new" className="text-accent">
+                        добавьте открывающую покупку вручную
+                      </Link>
+                      . Потом разберите этот же отчёт снова — отложенные продажи применятся, дубли
+                      не появятся.
+                    </p>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              // Таймаут ожидания: разбор идёт в другом процессе и мог не
+              // успеть. Врать «готово» нельзя, и крутить спиннер вечно тоже.
+              <p className="text-ink-muted">
+                Отчёт принят, разбор ещё идёт. Обновите страницу через минуту — сделки появятся
+                сами.
+              </p>
+            )}
 
             <Link to="/" className="mt-2 inline-block text-accent">
               Посмотреть сделки
@@ -292,8 +328,9 @@ export function ImportPage() {
           <div aria-live="polite" className="mt-3 text-sm">
             {reapply.isSuccess ? (
               <p className="tabular">
-                Создано {reapply.data.created}, пропущено {reapply.data.skipped}
-                {reapply.data.deferred.length > 0
+                Создано {reapply.data.result?.created ?? 0}, пропущено{' '}
+                {reapply.data.result?.skipped ?? 0}
+                {(reapply.data.result?.deferred ?? 0) > 0
                   ? ', часть по-прежнему ждёт покупок'
                   : ', отложенного больше нет'}
               </p>
