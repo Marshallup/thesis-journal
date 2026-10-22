@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { useSession } from '../../shared/api/session.tsx'
+import { accountLabel } from '../../shared/ui/account-label.ts'
 import { formatMoscowTime } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 
@@ -18,6 +19,23 @@ type Trade = {
 
 type Instrument = { id: string; symbol: string }
 
+type PortfolioAccount = {
+  accountId: string
+  name: string | null
+  provider: string
+  kind: string
+  baseCurrency: string
+  isIis: boolean
+  createdAt: string
+  realizedPnl: string
+  unrealizedPnl: string
+  fees: string
+  dividends: string
+  totalPnl: string
+}
+
+type CurrencyTotal = { currency: string; totalPnl: string }
+
 export function TradesPage() {
   const { signOut } = useSession()
 
@@ -31,9 +49,18 @@ export function TradesPage() {
     queryKey: ['accounts'],
     queryFn: () => api<{ id: string }[]>('/accounts'),
   })
+  const portfolio = useQuery({
+    queryKey: ['portfolio'],
+    queryFn: () => api<{ accounts: PortfolioAccount[]; byCurrency: CurrencyTotal[] }>('/portfolio'),
+  })
 
   const symbols = new Map(instruments.data?.map((item) => [item.id, item.symbol]))
   const noAccounts = accounts.isSuccess && accounts.data.length === 0
+  const byAccount = portfolio.data?.accounts ?? []
+  const byCurrency = portfolio.data?.byCurrency ?? []
+  // Подпись безымянного счёта уточняется только на фоне остальных.
+  const labels = byAccount.map((account) => ({ ...account, id: account.accountId }))
+  const hasPaper = byAccount.some((account) => account.kind === 'paper')
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
@@ -66,6 +93,83 @@ export function TradesPage() {
           </button>
         </div>
       </header>
+
+      {byAccount.length > 0 ? (
+        <section className="mt-6">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-rule text-ink-muted">
+                <th scope="col" className="h-8 text-left font-medium">
+                  Счёт
+                </th>
+                <th scope="col" className="h-8 text-right font-medium">
+                  Реализовано
+                </th>
+                <th scope="col" className="h-8 text-right font-medium">
+                  Нереализовано
+                </th>
+                <th scope="col" className="h-8 text-right font-medium">
+                  Комиссии
+                </th>
+                <th scope="col" className="h-8 text-right font-medium">
+                  Дивиденды
+                </th>
+                <th scope="col" className="h-8 text-right font-medium">
+                  Итог
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {byAccount.map((account, i) => (
+                <tr key={account.accountId} className="border-b border-rule">
+                  <td className="h-8">
+                    {accountLabel(labels[i]!, labels)}
+                    {account.kind === 'paper' ? (
+                      <span className="ml-2 text-xs text-ink-muted">бумажный</span>
+                    ) : null}
+                  </td>
+                  <td className="h-8 text-right">
+                    <Money value={account.realizedPnl} signed />
+                  </td>
+                  <td className="h-8 text-right">
+                    <Money value={account.unrealizedPnl} signed />
+                  </td>
+                  <td className="h-8 text-right">
+                    <Money value={account.fees} signed />
+                  </td>
+                  <td className="h-8 text-right">
+                    <Money value={account.dividends} signed />
+                  </td>
+                  <td className="h-8 text-right">
+                    <Money value={account.totalPnl} signed />
+                  </td>
+                </tr>
+              ))}
+              {/* Итог на валюту, а не один на всё: доллар к рублю без курса не
+                  прибавить, а конвертации в проекте пока нет. */}
+              {byCurrency.map((total) => (
+                <tr key={total.currency}>
+                  <td className="h-8" colSpan={5}>
+                    Итого, {total.currency}
+                  </td>
+                  <td className="h-8 text-right">
+                    <Money value={total.totalPnl} signed />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <p className="mt-2 text-xs text-ink-muted">
+            Взносы в итог не входят: это принесённые деньги, а не заработок. Нереализованное
+            считается по последним котировкам, бумага без цены в него не входит.
+            {hasPaper ? ' Бумажные счета помечены и в итог не входят.' : ''}{' '}
+            <Link to="/portfolio" className="text-accent">
+              Разбор по бумагам
+            </Link>
+          </p>
+        </section>
+      ) : null}
 
       {trades.isPending ? <p className="mt-6 text-sm text-ink-muted">Загружаем</p> : null}
 

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { Link, useParams } from 'react-router'
 import { api } from '../../shared/api/client.ts'
-import { formatAmount, formatMoscowTime, moscowDay } from '../../shared/ui/format.ts'
+import { formatAmount, formatMoscowTime, isZeroAmount, moscowDay } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 import { PriceChart } from './price-chart.tsx'
 import type { ChartMarker, ChartPoint } from './price-chart.tsx'
@@ -33,6 +33,9 @@ type PortfolioRow = {
   quotedAt: string | null
   unrealizedPnl: string | null
   realizedPnl: string
+  fees: string
+  totalPnl: string | null
+  incomplete: boolean
 }
 
 // Изменение цены от последней сделки. Якорь всегда показывается рядом: число
@@ -211,18 +214,57 @@ export function InstrumentPage() {
             </dd>
           </div>
         ) : null}
-
-        {row?.unrealizedPnl ? (
-          <div className="flex justify-between">
-            <dt className="text-ink-muted">Нереализовано по открытым лотам</dt>
-            <dd
-              className={`tabular ${row.unrealizedPnl.startsWith('-') ? 'text-loss' : 'text-gain'}`}
-            >
-              <Money value={row.unrealizedPnl} />
-            </dd>
-          </div>
-        ) : null}
       </dl>
+
+      {row ? (
+        <section className="mt-6 border-t border-rule pt-4 text-sm">
+          <dl className="flex flex-col gap-1">
+            <div className="flex justify-between">
+              <dt className="text-ink-muted">Реализовано по закрытым лотам</dt>
+              <dd>
+                <Money value={row.realizedPnl} signed />
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-ink-muted">
+                Нереализовано по остатку
+                {isZeroAmount(row.quantity) ? null : (
+                  <>
+                    {' '}
+                    <Money value={row.quantity} fractionDigits={0} maxFractionDigits={18} /> шт
+                  </>
+                )}
+              </dt>
+              <dd>{row.unrealizedPnl ? <Money value={row.unrealizedPnl} signed /> : '—'}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-ink-muted">Комиссии этой бумаги</dt>
+              <dd>
+                <Money value={row.fees} signed />
+              </dd>
+            </div>
+            <div className="flex justify-between border-t border-rule pt-1">
+              <dt>Итог по бумаге</dt>
+              <dd>{row.totalPnl ? <Money value={row.totalPnl} signed /> : '—'}</dd>
+            </div>
+          </dl>
+
+          {row.incomplete ? (
+            <p className="mt-3 text-loss">
+              По бумаге есть продажи, под которые нет покупок: пока они не разметены, итог неполон.{' '}
+              <Link to="/imports" className="text-accent">
+                Разобрать
+              </Link>
+            </p>
+          ) : null}
+
+          <p className="mt-3 text-ink-muted">
+            Дивиденды и депозитарные комиссии в итог не входят: в отчёте брокера они приходят без
+            бумаги, привязать их не к чему. Комиссия сделки входит со своим знаком — она уже ушла со
+            счёта.
+          </p>
+        </section>
+      ) : null}
 
       {ownDecisions.length > 0 ? (
         <section className="mt-8">

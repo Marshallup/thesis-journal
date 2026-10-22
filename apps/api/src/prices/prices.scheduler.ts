@@ -51,7 +51,7 @@ export class PricesScheduler implements OnApplicationBootstrap {
       // После живых котировок, а не до: история нужна один раз, а свежая цена
       // каждый цикл, и падение истории не должно отменять её.
       const history = await this.prices.backfill()
-      if (history.filled > 0) {
+      if (history.saved > 0) {
         this.log.log(`история: ${history.saved} дневных цен по ${history.filled} бумагам`)
       }
     } catch (error) {
