@@ -19,6 +19,9 @@ export type PortfolioRow = {
   quotedAt: string | null
   value: string | null
   unrealizedPnl: string | null
+  // Итог по бумаге: реализованное, нереализованное и её комиссии вместе.
+  // null — есть остаток, но нет цены: итог неизвестен.
+  totalPnl: string | null
 }
 
 export type PortfolioTotals = {
@@ -92,22 +95,30 @@ export class PortfolioService {
       // есть: выдуманная цена хуже прочерка.
       const priced = rows.map((row) => {
         const quote = prices.get(row.instrumentId)
-        if (!quote || Money.of(row.quantity).eq(zero)) {
+        const closed = Money.of(row.quantity).eq(zero)
+        if (!quote || closed) {
           return {
             ...row,
             price: quote?.price ?? null,
             quotedAt: quote?.quotedAt.toISOString() ?? null,
             value: null,
             unrealizedPnl: null,
+            // Позиция закрыта — итог полон и без цены: оценивать нечего.
+            // Остаток есть, а цены нет — итога не существует, прочерк честнее.
+            totalPnl: closed ? Money.of(row.realizedPnl).plus(row.fees).toString() : null,
           }
         }
         const value = Money.of(row.quantity).times(quote.price)
+        const unrealized = value.minus(row.costBasisTotal)
         return {
           ...row,
           price: quote.price,
           quotedAt: quote.quotedAt.toISOString(),
           value: value.toString(),
-          unrealizedPnl: value.minus(row.costBasisTotal).toString(),
+          unrealizedPnl: unrealized.toString(),
+          // Комиссия складывается, а не вычитается: в cash_ledger она лежит
+          // отрицательной суммой — тем же знаком, каким ушла со счёта.
+          totalPnl: Money.of(row.realizedPnl).plus(unrealized).plus(row.fees).toString(),
         }
       })
 
