@@ -23,6 +23,9 @@ services:
       # Роль приложения: под ней работает сервис и действует RLS.
       APP_DB_ROLE: thesis_app
       APP_DB_PASSWORD: '${APP_DB_PASSWORD:?не задан — скопируйте env.example в рабочую копию}'
+      # Роль воркера: своя схема целиком и ничего в public, кроме справочника.
+      INGESTOR_DB_ROLE: thesis_ingestor
+      INGESTOR_DB_PASSWORD: '${INGESTOR_DB_PASSWORD:?не задан — скопируйте env.example в рабочую копию}'
     ports: ['5432:5432']
     # С 18-й версии монтируется /var/lib/postgresql, не .../data:
     # данные лежат в подкаталоге по номеру версии, иначе образ не стартует.
