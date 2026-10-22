@@ -74,6 +74,11 @@ import { TradesModule } from './trades/trades.module.ts'
 export class AppModule implements NestModule {
   // Middleware здесь, а не в main.ts, по той же причине: чтобы работало в тестах.
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(cookieParser()).forRoutes('*')
+    // `{*path}`, а не `*`: в path-to-regexp 8 звёздочка без имени устарела.
+    // Nest её пока автоматически переписывает, предупреждая на каждом старте,
+    // но на следующей мажорной версии маршрут просто перестанет совпадать.
+    // Фигурные скобки оставляют сегмент необязательным — то же покрытие, что
+    // у прежней звёздочки.
+    consumer.apply(cookieParser()).forRoutes('{*path}')
   }
 }
