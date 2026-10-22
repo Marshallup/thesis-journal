@@ -10,11 +10,8 @@ type Side = 'buy' | 'sell'
 export class MatchingService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Отдельной транзакцией после записи, а не внутри неё — сознательно иначе,
-  // чем позиция в задаче 9. Там агрегат обязан совпадать с лотами всегда;
-  // здесь же сделка без тезиса — штатное состояние продукта, под него есть
-  // экран. Незаписанная сделка — потеря данных, а непривязанная — работа,
-  // которую можно повторить.
+  // Отдельной транзакцией после записи: сделка без тезиса — штатное состояние,
+  // а непривязанная сделка это работа, которую можно повторить.
   matchTrade(userId: string, tradeId: string): Promise<MatchResult> {
     return this.prisma.withUser(userId, async (tx) => {
       const trade = await tx.trade.findUniqueOrThrow({ where: { id: tradeId } })
@@ -44,10 +41,8 @@ export class MatchingService {
     })
   }
 
-  // Вызывается после создания решения. На практике срабатывает редко: сделка
-  // должна быть исполнена позже решения, а значит уже записанная сделка почти
-  // всегда раньше. Остаётся как точка повторного прогона — например с экрана
-  // неразмеченных сделок в задаче 18.
+  // После создания решения. Срабатывает редко: сделка должна быть позже
+  // решения, а уже записанная почти всегда раньше.
   matchDecision(userId: string, decisionId: string): Promise<MatchResult> {
     return this.prisma.withUser(userId, async (tx) => {
       const decision = await tx.decision.findUniqueOrThrow({ where: { id: decisionId } })

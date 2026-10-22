@@ -49,10 +49,8 @@ afterAll(async () => {
   await db.stop()
 })
 
-// Замер перед задачей показал, что транзакции двух параллельных импортов
-// открываются с разницей в миллисекунду и пересекаются около 14 мс: контенция
-// настоящая, и тест на ней держится. В задаче 14 её не было потому, что там
-// транзакция состояла из одной вставки.
+// Замер показал: транзакции двух импортов пересекаются около 14 мс — контенция
+// настоящая. В задаче 14 её не было: там транзакция была из одной вставки.
 it('при двух одновременных импортах работает ровно один', async () => {
   const { userId, accountId } = await seedAccount('concurrent@example.com')
   const importId = await uploadFixture(userId, accountId)
@@ -123,10 +121,8 @@ it('проигравший не помечает импорт неудачным
   const importId = await uploadFixture(userId, accountId)
 
   await db.prisma.$transaction(async (holder) => {
-    // Блокирующий вариант вернул бы `void`, который Prisma не умеет
-    // десериализовать (`Failed to deserialize column of type 'void'`).
-    // Поэтому та же функция, что в сервисе: она отдаёт boolean, и здесь он
-    // обязан быть true — блокировку никто не держит.
+    // Та же функция, что в сервисе: блокирующая вернула бы `void`, который
+    // Prisma не десериализует.
     const [taken] = await holder.$queryRaw<{ locked: boolean }[]>`
       select pg_try_advisory_xact_lock(hashtext(${`import:${accountId}`})) as locked
     `

@@ -8,12 +8,10 @@ import type { ApplyTrade } from './dto.ts'
 
 const ZERO = Money.of('0')
 
-// Импортированная сделка приносит провайдера и свой номер из отчёта, ручная —
-// нет, и external_id у неё остаётся NULL.
+// У импортированной сделки есть номер из отчёта, у ручной external_id — NULL.
 export type ApplyInput = ApplyTrade & { provider: string; externalId: string | null }
 
-// Нужны только эти два поля; передавать весь счёт незачем, а читать его на
-// каждую строку отчёта — лишние N запросов.
+// Только эти два поля: читать счёт на каждую строку отчёта незачем.
 type TradeAccount = { id: string; baseCurrency: string }
 
 @Injectable()
@@ -23,9 +21,8 @@ export class TradesService {
     private readonly matching: MatchingService,
   ) {}
 
-  // `linked: false` — сделки без привязанного решения. Фильтр делает база, а не
-  // клиент: после импорта года таких сделок десятки, и возить их все, чтобы
-  // отбросить размеченные, бессмысленно.
+  // `linked: false` — без привязанного решения. Фильтрует база: после импорта
+  // за год таких сделок десятки.
   list(userId: string, options: { linked?: boolean } = {}) {
     return this.prisma.withUser(userId, (tx) =>
       tx.trade.findMany({
@@ -45,29 +42,24 @@ export class TradesService {
         provider: 'manual',
         externalId: null,
       })
-      // У ручной сделки external_id равен NULL, а NULL-ы в уникальном индексе
-      // различны — конфликта быть не может. Пустой ответ здесь означал бы
-      // сломанный индекс, а не дубль, поэтому это assert, а не ветка логики.
+      // NULL-ы в уникальном индексе различны, значит ручная сделка не
+      // конфликтует никогда. Пустой ответ означал бы сломанный индекс.
       if (!inserted) throw new Error('manual trade cannot conflict: external_id is null')
 
-      // Контроллер отдаёт модель целиком, а вставка возвращает только id:
-      // $queryRaw принёс бы колонки в snake_case и сломал бы форму ответа.
+      // Вставка возвращает id, а контроллеру нужна модель: $queryRaw отдал бы
+      // колонки в snake_case.
       return tx.trade.findUniqueOrThrow({ where: { id: inserted.id } })
     })
 
-    // После транзакции, а не внутри: ошибка матчинга не должна отменять
-    // запись сделки. Непривязанную сделку можно размётить позже, незаписанную
-    // восстановить нечем.
+    // После транзакции: непривязанную сделку можно разметить позже,
+    // незаписанную — восстановить нечем.
     await this.matching.matchTrade(userId, applied.id)
     return applied
   }
 
-  // Принимает готовую транзакцию: импорт применяет весь отчёт одной, ручной
-  // ввод — своей. Всё внутри — сделка, лоты, позиция — обязано измениться
-  // вместе, иначе сумма остатков лотов разойдётся с позицией.
-  //
-  // Возвращает null, если такая сделка уже есть: тогда ни лоты, ни позиция не
-  // двигаются. Матчинг остаётся на вызывающем — он идёт после коммита.
+  // Принимает готовую транзакцию: импорт применяет весь отчёт одной. Сделка,
+  // лоты и позиция меняются вместе, иначе остатки разойдутся с позицией.
+  // null — сделка уже есть; матчинг остаётся на вызывающем.
   async applyWithin(
     tx: Prisma.TransactionClient,
     account: TradeAccount,
@@ -79,9 +71,8 @@ export class TradesService {
     const fee = Money.of(input.fee)
     const executedAt = new Date(input.executedAt)
 
-    // ON CONFLICT DO NOTHING RETURNING, а не create: у импорта повторная
-    // заливка — штатный случай, а create на конфликте бросает. Ноль
-    // вернувшихся строк и означает «эта сделка уже импортирована».
+    // ON CONFLICT, а не create: повторная заливка — штатный случай, а create
+    // на конфликте бросает. Ноль строк значит «уже импортирована».
     const inserted = await tx.$queryRaw<{ id: string }[]>`
       insert into trades
         (account_id, instrument_id, side, quantity, price,
@@ -166,9 +157,8 @@ export class TradesService {
     return trade
   }
 
-  // Одним оператором с ON CONFLICT: «сначала SELECT, потом INSERT» здесь даёт
-  // гонку двух первых сделок по одному инструменту. Прибавляются дельты, а не
-  // подставляются итоги, поэтому порядок применения не важен.
+  // Одним оператором: «сначала SELECT, потом INSERT» даёт гонку двух первых
+  // сделок по инструменту. Прибавляются дельты, поэтому порядок не важен.
   private movePosition(
     tx: Prisma.TransactionClient,
     input: Pick<ApplyInput, 'accountId' | 'instrumentId'>,

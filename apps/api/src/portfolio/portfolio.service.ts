@@ -11,8 +11,7 @@ export type PortfolioRow = {
   averagePrice: string | null
   realizedPnl: string
   fees: string
-  // true, если по бумаге есть отложенные продажи: числа по ней заведомо
-  // неполные, и показывать их как итог нельзя.
+  // Есть отложенные продажи — числа по бумаге неполные.
   incomplete: boolean
 }
 
@@ -21,9 +20,7 @@ export type PortfolioTotals = {
   fees: string
   dividends: string
   deposits: string
-  // Реализованный результат за вычетом всех комиссий. Приблизительный:
-  // комиссии покупок по открытым позициям тоже здесь, хотя относятся к
-  // будущему результату, а не к прошлому.
+  // За вычетом всех комиссий, включая уплаченные за ещё не проданные бумаги.
   net: string
 }
 
@@ -33,12 +30,9 @@ export class PortfolioService {
 
   async summary(userId: string): Promise<{ rows: PortfolioRow[]; totals: PortfolioTotals }> {
     return this.prisma.withUser(userId, async (tx) => {
-      // Суммируем по бумаге, а не по паре «счёт + бумага»: человек спрашивает
-      // «сколько у меня SBER», а не «сколько на каждом из счетов». Налоговые
-      // режимы ИИС и брокерского при этом смешиваются — см. docs/unknowns.md.
-      //
-      // RLS отфильтрует positions, cash_ledger и deferred_operations сама:
-      // справочник инструментов общий, остальное — только своё.
+      // По бумаге, а не по паре «счёт + бумага»: вопрос звучит «сколько у меня
+      // SBER». ИИС и брокерский при этом смешиваются — см. docs/unknowns.md.
+      // Свои строки отбирает RLS, справочник инструментов общий.
       const rows = await tx.$queryRaw<PortfolioRow[]>`
         with involved as (
           -- Бумага с одной лишь отложенной продажей позиции не имеет, но

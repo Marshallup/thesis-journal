@@ -3,10 +3,8 @@ import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common'
 import { PrismaClient, PrismaPg } from '@thesis/db'
 import type { Prisma } from '@thesis/db'
 
-// Единственное место, где адрес базы читается не через ConfigService, и это
-// вынужденно: ConfigModule снимает значения при импорте модуля, а адрес
-// контейнера Testcontainers известен только позже. Через ConfigService клиент
-// получал заглушку и падал с DatabaseNotReachable — проверено.
+// Мимо ConfigService вынужденно: он снимает значения при импорте модуля, а
+// адрес контейнера Testcontainers известен позже.
 function connectionString(): string {
   // Роль приложения, а не владелец: владелец и суперюзер обходят RLS.
   // Отката на DATABASE_URL нет намеренно — иначе забытая переменная даёт

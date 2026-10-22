@@ -9,6 +9,9 @@ export const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // Необязательный: по умолчанию выводится из NODE_ENV. Нужен, чтобы вернуть
+  // стартовую простыню Nest, понижённую QuietLogger до debug.
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
   PORT: z.coerce.number().default(3000),
 })
 

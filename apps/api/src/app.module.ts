@@ -8,12 +8,13 @@ import { LoggerModule } from 'nestjs-pino'
 import { AccountsModule } from './accounts/accounts.module.ts'
 import { AuthModule } from './auth/auth.module.ts'
 import { envSchema } from './config/env.ts'
+import { QuietLogger } from './config/quiet-logger.ts'
 import type { Env } from './config/env.ts'
 import { DecisionsModule } from './decisions/decisions.module.ts'
 import { HealthModule } from './health/health.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
-import { PortfolioModule } from './portfolio/portfolio.module.ts'
 import { InstrumentsModule } from './instruments/instruments.module.ts'
+import { PortfolioModule } from './portfolio/portfolio.module.ts'
 import { TradesModule } from './trades/trades.module.ts'
 
 @Module({
@@ -24,8 +25,8 @@ import { TradesModule } from './trades/trades.module.ts'
       validationSchema: envSchema,
       // Путь явно: по умолчанию он считается от cwd, а запускаемся мы из apps/api.
       envFilePath: resolve(import.meta.dirname, '../../..', '.env'),
-      // Единственное место, где переменная читается напрямую, и иначе никак:
-      // это настройка самого ConfigModule, до появления ConfigService.
+      // Единственное прямое чтение переменной: это настройка самого
+      // ConfigModule, до появления ConfigService.
       ignoreEnvFile: process.env.NODE_ENV === 'test',
     }),
     LoggerModule.forRootAsync({
@@ -35,7 +36,8 @@ import { TradesModule } from './trades/trades.module.ts'
         return {
           pinoHttp: {
             // В тестах логи только мешают выводу прогона.
-            level: nodeEnv === 'test' ? 'silent' : 'info',
+            level:
+              config.get('LOG_LEVEL', { infer: true }) ?? (nodeEnv === 'test' ? 'silent' : 'info'),
             // В разработке логи читает человек, в проде их разбирают машины.
             ...(nodeEnv === 'development'
               ? {
@@ -45,7 +47,20 @@ import { TradesModule } from './trades/trades.module.ts'
                   },
                 }
               : {}),
-            // pino-http пишет заголовки целиком, а там токен и refresh-cookie.
+            // По умолчанию pino-http печатает запрос и ответ целиком, со всеми
+            // заголовками: полторы тысячи знаков на строку, из них полезны
+            // четыре значения.
+            serializers: {
+              req: (req: { method: string; url: string }) => ({
+                method: req.method,
+                url: req.url,
+              }),
+              res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+            },
+            // Пробы инфраструктуры ходят в /health каждые несколько секунд.
+            autoLogging: { ignore: (req: { url?: string }) => req.url === '/health' },
+            // Страховка на случай, если заголовки вернутся в сериализатор:
+            // там живут access-токен и refresh-cookie.
             redact: {
               paths: [
                 'req.headers.authorization',
@@ -67,18 +82,15 @@ import { TradesModule } from './trades/trades.module.ts'
     ImportsModule,
     PortfolioModule,
   ],
-  // Через APP_PIPE, а не useGlobalPipes в main.ts: иначе валидация не включится
-  // в тестах, где приложение собирается через Test.createTestingModule.
-  providers: [{ provide: APP_PIPE, useClass: StandardSchemaValidationPipe }],
+  // Через APP_PIPE, а не useGlobalPipes: иначе валидации не будет в тестах,
+  // где приложение собирается через Test.createTestingModule.
+  providers: [QuietLogger, { provide: APP_PIPE, useClass: StandardSchemaValidationPipe }],
 })
 export class AppModule implements NestModule {
   // Middleware здесь, а не в main.ts, по той же причине: чтобы работало в тестах.
   configure(consumer: MiddlewareConsumer): void {
-    // `{*path}`, а не `*`: в path-to-regexp 8 звёздочка без имени устарела.
-    // Nest её пока автоматически переписывает, предупреждая на каждом старте,
-    // но на следующей мажорной версии маршрут просто перестанет совпадать.
-    // Фигурные скобки оставляют сегмент необязательным — то же покрытие, что
-    // у прежней звёздочки.
+    // `{*path}`, а не `*`: безымянная звёздочка в path-to-regexp 8 устарела.
+    // Скобки оставляют сегмент необязательным — покрытие то же.
     consumer.apply(cookieParser()).forRoutes('{*path}')
   }
 }
