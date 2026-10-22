@@ -109,6 +109,15 @@ export class DecisionsService {
     // Срабатывает редко — сделка обязана быть позже решения, — но вызов
     // предусмотрен планом и служит точкой повторного прогона.
     await this.matching.matchDecision(userId, decision.id)
+
+    // Сделки, названные явно, привязываются здесь: окно горизонта к ним не
+    // применяется, потому что решение задним числом пишется именно про
+    // прошлую сделку. Честность держит пометка post_factum, а не отказ
+    // привязать. Привязка идемпотентна, поэтому уже найденная автоматом
+    // сделка просто попадёт в skipped.
+    if (dto.tradeIds && dto.tradeIds.length > 0) {
+      await this.linkTrades(userId, decision.id, dto.tradeIds)
+    }
     return decision
   }
 

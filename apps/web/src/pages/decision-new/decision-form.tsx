@@ -37,6 +37,8 @@ export function DecisionForm() {
   // сторона известны из сделки, и переспрашивать их значит приглашать ошибку.
   const [params] = useSearchParams()
   const postFactum = params.get('postFactum') === '1'
+  // Сделка, из-за которой открыли форму: её привяжет само создание решения.
+  const tradeId = params.get('tradeId')
   const next = params.get('next') ?? '/decisions'
 
   const [accountId, setAccountId] = useState(params.get('accountId') ?? '')
@@ -76,12 +78,15 @@ export function DecisionForm() {
           conviction,
           mood,
           ...(postFactum ? { postFactum: true } : {}),
+          ...(tradeId ? { tradeIds: [tradeId] } : {}),
           ...(invalidator ? { invalidator } : {}),
           ...(freeText ? { freeText } : {}),
         }),
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['decisions'] })
+      // Сделка перестала быть без тезиса — список разметки обязан это знать.
+      await queryClient.invalidateQueries({ queryKey: ['trades'] })
       // В журнал, а не на сделки: запись должна быть видна сразу, иначе
       // человек не понимает, произошло ли что-нибудь.
       void navigate(next)

@@ -34,6 +34,10 @@ function postFactumLink(trade: Trade): string {
     accountId: trade.accountId,
     instrumentId: trade.instrumentId,
     side: trade.side,
+    // Сделка передаётся в форму: иначе решение запишется, а сделка останется
+    // без тезиса — автопривязка её не возьмёт, она требует сделку позже
+    // решения.
+    tradeId: trade.id,
     postFactum: '1',
     next: '/trades/unlinked',
   })
@@ -43,17 +47,20 @@ function postFactumLink(trade: Trade): string {
 // Решение исполняется сделкой того же счёта, той же бумаги и той же стороны —
 // то же правило, что проверяет сервер. Проверять его и здесь нужно не ради
 // безопасности, а чтобы не предлагать человеку заведомо отказной выбор.
+//
+// Решения задним числом из списка не исключаются: ровно они и пишутся про уже
+// случившиеся сделки, и выбросить их значит предложить человеку записать такое
+// решение и тут же отказать в привязке.
 function suitable(decisions: Decision[], trades: Trade[]): Decision[] {
   const first = trades[0]
   if (!first) return []
-  return decisions.filter(
-    (decision) =>
-      trades.every(
-        (trade) =>
-          trade.accountId === decision.accountId &&
-          trade.instrumentId === decision.instrumentId &&
-          trade.side === decision.side,
-      ) && !decision.postFactum,
+  return decisions.filter((decision) =>
+    trades.every(
+      (trade) =>
+        trade.accountId === decision.accountId &&
+        trade.instrumentId === decision.instrumentId &&
+        trade.side === decision.side,
+    ),
   )
 }
 
@@ -207,6 +214,7 @@ export function UnlinkedTradesPage() {
               {candidates.map((decision) => (
                 <option key={decision.id} value={decision.id}>
                   {formatMoscowTime(decision.createdAt)} — {decision.thesis.slice(0, 60)}
+                  {decision.postFactum ? ' (задним числом)' : ''}
                 </option>
               ))}
             </select>
