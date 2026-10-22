@@ -1,4 +1,8 @@
-# Недели 1–3: только postgres и redis. rabbitmq, kafka, clickhouse — с недели 4.
+# Недели 1–3: postgres и redis. Неделя 4 добавила rabbitmq и kafka; clickhouse — неделя 6.
+#
+# Сами процессы (api, ingestor, web) в compose не поднимаются: в разработке они
+# запускаются через pnpm, а образы и деплой — задача 48. Здесь только то, что
+# иначе пришлось бы ставить руками.
 
 # Фиксируем имя: иначе каждый worktree поднимет свой стек на тех же портах.
 name: thesis
@@ -19,6 +23,9 @@ services:
       # Роль приложения: под ней работает сервис и действует RLS.
       APP_DB_ROLE: thesis_app
       APP_DB_PASSWORD: '${APP_DB_PASSWORD:?не задан — скопируйте env.example в рабочую копию}'
+      # Роль воркера: своя схема целиком и ничего в public, кроме справочника.
+      INGESTOR_DB_ROLE: thesis_ingestor
+      INGESTOR_DB_PASSWORD: '${INGESTOR_DB_PASSWORD:?не задан — скопируйте env.example в рабочую копию}'
     ports: ['5432:5432']
     # С 18-й версии монтируется /var/lib/postgresql, не .../data:
     # данные лежат в подкаталоге по номеру версии, иначе образ не стартует.
@@ -42,5 +49,59 @@ services:
       timeout: 3s
       retries: 10
 
+  rabbitmq:
+    image: rabbitmq:4.4.0-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: thesis
+      # Как и у postgres: пароль приходит из окружения, а форма `:?` валит
+      # запуск с внятным текстом вместо тихого пароля из репозитория.
+      RABBITMQ_DEFAULT_PASS: '${RABBITMQ_PASSWORD:?не задан — скопируйте env.example в рабочую копию}'
+    # 5672 — протокол, 15672 — панель: в неё удобно смотреть, где застряла
+    # команда и что лежит в DLQ.
+    ports: ['5672:5672', '15672:15672']
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:4.4.0
+    environment:
+      # Один узел и брокером, и контроллером: KRaft, ZooKeeper в Kafka 4 удалён.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      # Клиенты живут на хосте, поэтому брокер объявляет себя как localhost.
+      # Процессу внутри сети compose этот адрес не подойдёт — переехав в
+      # контейнер, здесь понадобится второй слушатель.
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      # Узел один, реплицировать не на кого: с тройкой по умолчанию служебные
+      # топики не создаются и брокер бесполезен.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Шесть партиций: порядок внутри тикера держится ключом сообщения, а не
+      # единственной партицией.
+      KAFKA_NUM_PARTITIONS: 6
+      # В разработке ждать опоздавших консьюмеров нечего.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    ports: ['9092:9092']
+    volumes:
+      - 'kafkadata:/var/lib/kafka/data'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
 volumes:
   pgdata:
+  kafkadata:

@@ -26,10 +26,12 @@ export class TradesController {
     @Query('linked', { schema: z.enum(['true', 'false']).optional() })
     linked: 'true' | 'false' | undefined,
     @Query('instrumentId', { schema: z.uuid().optional() }) instrumentId: string | undefined,
+    @Query('accountId', { schema: z.uuid().optional() }) accountId: string | undefined,
   ) {
     return this.trades.list(user.userId, {
       ...(linked ? { linked: linked === 'true' } : {}),
       ...(instrumentId ? { instrumentId } : {}),
+      ...(accountId ? { accountId } : {}),
     })
   }
 

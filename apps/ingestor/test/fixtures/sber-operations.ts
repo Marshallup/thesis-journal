@@ -1,0 +1,164 @@
+import { Money } from '@thesis/contracts'
+import writeXlsxFile from 'write-excel-file/node'
+import type { Cell, Row } from 'write-excel-file/node'
+
+// Структура снята с настоящей выгрузки, данные выдуманы целиком — это видно
+// в диффе, а не обещано на словах.
+const CONTRACT = 'S000TEST'
+const MARKET = 'Фондовый рынок'
+
+// Формат нужен не для красоты: по нему библиотека понимает, что в ячейке дата,
+// и парсер получает Date, а не число, — как на настоящем файле.
+const DATE_FORMAT = 'dd.mm.yyyy hh:mm:ss'
+
+function str(value: string): Cell {
+  return { value, type: String }
+}
+
+// Время в выгрузке есть, стенные часы московские — в фикстуре тоже московские.
+// UTC-поля Date несут стенные часы, из них библиотека и пишет серийное число.
+function at(moscowTime: string): Cell {
+  return { value: new Date(`${moscowTime.replace(' ', 'T')}Z`), type: Date, format: DATE_FORMAT }
+}
+
+// В файле суммы лежат числами, значит и фикстура пишет числа. Деньги в данных
+// остаются строками, `number` появляется только здесь, без арифметики.
+function amount(value: string): Cell {
+  return { value: Number(Money.of(value).toString()), type: Number }
+}
+
+const TRADES_HEADER = [
+  'Номер договора',
+  'Номер сделки',
+  'Дата заключения',
+  'Код финансового инструмента',
+  'Тип финансового инструмента',
+  'Тип рынка',
+  'Операция',
+  'Количество',
+  'Цена',
+  'Объем сделки',
+  'Валюта',
+]
+
+const CASH_HEADER = [
+  'Номер договора',
+  'Дата подачи поручения',
+  'Дата исполнения поручения',
+  'Операция',
+  'Код финансового инструмента',
+  'Сумма',
+  'Валюта операции',
+  'Списание с',
+  'Зачисление на',
+  'Содержание операции',
+  'Статус',
+  'Номер договора списания',
+  'Номер договора зачисления',
+]
+
+function header(names: string[]): Row {
+  return names.map(str)
+}
+
+function trade(
+  id: string,
+  moscowTime: string,
+  ticker: string,
+  operation: string,
+  quantity: string,
+  price: string,
+  volume: string,
+): Row {
+  return [
+    str(CONTRACT),
+    str(id),
+    at(moscowTime),
+    str(ticker),
+    str('Акция'),
+    str(MARKET),
+    str(operation),
+    amount(quantity),
+    amount(price),
+    amount(volume),
+    str('RUB'),
+  ]
+}
+
+// Дата подачи и дата исполнения в выгрузке совпадают до секунды. Сумма всегда
+// положительная, направление даёт «Операция»: у комиссии «11.28», а не «−11.28».
+function cash(moscowTime: string, operation: string, ticker: string, value: string): Row {
+  return [
+    str(CONTRACT),
+    at(moscowTime),
+    at(moscowTime),
+    str(operation),
+    str(ticker),
+    amount(value),
+    str('RUB'),
+    str(''),
+    str(''),
+    str(''),
+    str('Исполнена'),
+    str(''),
+    str(''),
+  ]
+}
+
+// Порядок строк, как в настоящей выгрузке, — от новых к старым.
+const TRADES: Row[] = [
+  trade('77004', '2026-10-02 11:05:40', 'SBER', 'Продажа', '7', '268.3', '1878.1'),
+  trade('77003', '2026-09-04 16:20:02', 'LKOH', 'Покупка', '2', '7250.5', '14501'),
+  // Две покупки одного дня: порядок внутри дня виден только по времени.
+  trade('77002', '2026-08-03 12:40:11', 'SBER', 'Покупка', '5', '251', '1255'),
+  trade('77001', '2026-08-03 10:15:04', 'SBER', 'Покупка', '10', '250.5', '2505'),
+]
+
+const EXTRA_DEPOSIT = cash('2026-10-07 09:00:00', 'Пополнение счёта', '', '250')
+
+const CASH: Row[] = [
+  // Два пополнения с совпадающей секундой — вырожденный случай, на котором
+  // хеш без occurrence склеил бы их в одну операцию.
+  cash('2026-10-06 09:00:00', 'Пополнение счёта', '', '1000'),
+  cash('2026-10-06 09:00:00', 'Пополнение счёта', '', '1000'),
+  // Комиссия за сделку 02.10 приходит днём расчётов, 05.10: в выгрузке она
+  // отвязана от сделки и по дате, и по количеству строк.
+  cash('2026-10-05 09:30:00', 'Комиссия', 'SBER', '11.28'),
+  cash('2026-10-05 12:00:00', 'Выплата дивидендов', 'SBER', '340.2'),
+  cash('2026-08-01 08:30:00', 'Пополнение счёта', '', '50000'),
+]
+
+export type SberFixtureOptions = {
+  // Облигация: цена в процентах от номинала, поэтому объём не равен
+  // количество × цена — 3 штуки по 101.5 % это 3045, а не 304.5.
+  bond?: boolean
+  // Добавить продажу тикера, покупок которого в отчёте нет: так выглядит
+  // выгрузка за период, начавшийся позже покупки.
+  uncoveredSell?: boolean
+  // Ещё одно пополнение. Нужно, когда требуется второй отчёт по тому же счёту:
+  // байтово иной, иначе заливка вернёт тот же импорт по хешу содержимого, —
+  // но такой же валидный.
+  extraDeposit?: boolean
+}
+
+export function buildSberOperationsXlsx(options: SberFixtureOptions = {}): Promise<Buffer> {
+  const trades = [
+    ...(options.bond
+      ? [trade('77005', '2026-10-07 10:00:00', 'RU000TEST', 'Покупка', '3', '101.5', '3045')]
+      : []),
+    ...(options.uncoveredSell
+      ? [trade('77006', '2026-10-08 10:00:00', 'GMKN', 'Продажа', '4', '130.25', '521')]
+      : []),
+    ...TRADES,
+  ]
+  // «Заявки» и «Движение ЦБ» парсер не читает, но их наличие — часть формата.
+  return writeXlsxFile([
+    { sheet: 'Заявки', data: [header(['Номер договора', 'Номер заявки'])] },
+    { sheet: 'Сделки', data: [header(TRADES_HEADER), ...trades] },
+    {
+      sheet: 'Движение ДС',
+      data: [header(CASH_HEADER), ...(options.extraDeposit ? [EXTRA_DEPOSIT] : []), ...CASH],
+    },
+    { sheet: 'Движение ЦБ', data: [header(['Номер договора', 'Дата подачи поручения'])] },
+  ]).toBuffer()
+}

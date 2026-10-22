@@ -12,10 +12,11 @@ import { QuietLogger } from './config/quiet-logger.ts'
 import type { Env } from './config/env.ts'
 import { DecisionsModule } from './decisions/decisions.module.ts'
 import { HealthModule } from './health/health.module.ts'
+import { ImportsConsumerModule } from './imports/imports-consumer.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
 import { InstrumentsModule } from './instruments/instruments.module.ts'
 import { PortfolioModule } from './portfolio/portfolio.module.ts'
-import { PricesSchedulerModule } from './prices/prices-scheduler.module.ts'
+import { PricesConsumerModule } from './prices/prices-consumer.module.ts'
 import { PricesModule } from './prices/prices.module.ts'
 import { TradesModule } from './trades/trades.module.ts'
 
@@ -82,9 +83,10 @@ import { TradesModule } from './trades/trades.module.ts'
     InstrumentsModule,
     AccountsModule,
     ImportsModule,
+    ImportsConsumerModule,
     PortfolioModule,
     PricesModule,
-    PricesSchedulerModule,
+    PricesConsumerModule,
   ],
   // Через APP_PIPE, а не useGlobalPipes: иначе валидации не будет в тестах,
   // где приложение собирается через Test.createTestingModule.

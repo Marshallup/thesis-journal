@@ -5,6 +5,9 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // Две схемы, а не одна: `public` принадлежит api, `ingestor` — воркеру.
+  // Граница держится правами в базе, а не договорённостью.
+  schemas  = ["public", "ingestor"]
 }
 
 model User {
@@ -19,6 +22,7 @@ model User {
   accounts      Account[]
 
   @@map("users")
+  @@schema("public")
 }
 
 // Лежат только живые токены: применённый удаляется при ротации.
@@ -34,6 +38,7 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+  @@schema("public")
 }
 
 // Счёт у брокера или на бирже. Владелец — сервис api, как и users,
@@ -64,6 +69,51 @@ model Account {
   @@unique([userId, name], name: "account_name_unique", map: "account_name_unique")
   @@index([userId])
   @@map("accounts")
+  @@schema("public")
+}
+
+// Обработанные сообщения: дедупликация потребителя событий. RLS нет —
+// это инфраструктура, а не данные пользователя.
+model ProcessedMessage {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  consumer    String
+  eventId     String   @map("event_id") @db.Uuid
+  processedAt DateTime @default(now()) @map("processed_at") @db.Timestamptz(6)
+
+  @@unique([consumer, eventId], map: "processed_message_identity")
+  @@map("processed_messages")
+  @@schema("public")
+}
+
+// Исходящие события. Пишутся в одной транзакции с данными, отправляются
+// отдельным циклом: см. комментарий в миграции и правило про outbox.
+model OutboxEvent {
+  id          String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  topic       String
+  key         String
+  payload     Json      @db.JsonB
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  // NULL — ещё не отправлено. Это и есть очередь.
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+
+  @@map("outbox_events")
+  @@schema("ingestor")
+}
+
+// Цены, как их отдала биржа: источник истины у того, кто их получает. Пишет и
+// читает только ingestor — у api на эту схему нет прав вовсе.
+model ProviderPrice {
+  id           String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  instrumentId String   @map("instrument_id") @db.Uuid
+  source       String
+  price        Decimal  @db.Decimal(28, 8)
+  quotedAt     DateTime @map("quoted_at") @db.Timestamptz(6)
+  fetchedAt    DateTime @default(now()) @map("fetched_at") @db.Timestamptz(6)
+
+  @@unique([instrumentId, source, quotedAt], map: "provider_price_identity")
+  @@index([instrumentId, quotedAt(sort: Desc)], map: "provider_prices_instrument_quoted_at_idx")
+  @@map("instrument_prices")
+  @@schema("ingestor")
 }
 
 // Справочник, общий для всех пользователей: политики RLS на него не ставятся.
@@ -79,6 +129,7 @@ model Instrument {
   // именем — разные инструменты. Алиасы провайдеров придут отдельной таблицей.
   @@unique([symbol, class])
   @@map("instruments")
+  @@schema("public")
 }
 
 // Факт сделки, неизменяемый. Владелец — сервис core, поэтому ссылки на
@@ -108,6 +159,7 @@ model Trade {
   @@unique([accountId, provider, externalId], name: "trade_idempotency", map: "trade_idempotency")
   @@index([accountId, executedAt])
   @@map("trades")
+  @@schema("public")
 }
 
 // Партия: сколько купили и сколько затрат за ней ещё стоит. Затраты — суммой,
@@ -131,6 +183,7 @@ model Lot {
 
   @@index([accountId, instrumentId, openedAt])
   @@map("lots")
+  @@schema("public")
 }
 
 // Списание партии при продаже, append-only.
@@ -151,6 +204,7 @@ model LotConsumption {
   // Повторное применение одной продажи не должно задваивать списание.
   @@unique([lotId, tradeId], name: "lot_consumption_idempotency", map: "lot_consumption_idempotency")
   @@map("lot_consumptions")
+  @@schema("public")
 }
 
 model Position {
@@ -169,6 +223,7 @@ model Position {
 
   @@unique([accountId, instrumentId])
   @@map("positions")
+  @@schema("public")
 }
 
 // Почему, а не только что. Ядро решения неизменяемо: правка создаёт ревизию,
@@ -209,6 +264,7 @@ model Decision {
 
   @@index([accountId, instrumentId, createdAt])
   @@map("decisions")
+  @@schema("public")
 }
 
 // Полный снимок изменяемых полей. Append-only: правок у правок не бывает.
@@ -230,6 +286,7 @@ model DecisionRevision {
 
   @@index([decisionId, createdAt])
   @@map("decision_revisions")
+  @@schema("public")
 }
 
 // Связь решения со сделками. Заполняет задача 11.
@@ -249,6 +306,7 @@ model DecisionTrade {
   @@unique([tradeId], name: "decision_trade_one_per_trade", map: "decision_trade_one_per_trade")
   @@index([decisionId])
   @@map("decision_trades")
+  @@schema("public")
 }
 
 // Сырьё хранится целиком: найдётся баг в маппинге — перегоним из него, а не
@@ -279,15 +337,16 @@ model CashLedger {
   @@unique([accountId, provider, externalId], name: "cash_ledger_idempotency", map: "cash_ledger_idempotency")
   @@index([accountId, occurredAt])
   @@map("cash_ledger")
+  @@schema("public")
 }
 
 model DeferredOperation {
   id        String @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String @map("account_id") @db.Uuid
   // Импорт, из которого операция приехала: его же и переприменяют, когда
-  // покупка появилась. Связь настоящая — обе таблицы в схеме core.
-  importId  String    @map("import_id") @db.Uuid
-  rawImport RawImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  // покупка появилась. Связь настоящая — обе таблицы в схеме api.
+  importId  String @map("import_id") @db.Uuid
+  import    Import @relation(fields: [importId], references: [id], onDelete: Cascade)
 
   instrumentId String @map("instrument_id") @db.Uuid
   // Номер сделки из отчёта. Он же ключ идемпотентности сделки, когда она
@@ -308,6 +367,7 @@ model DeferredOperation {
   @@unique([importId, externalId], name: "deferred_operation_identity", map: "deferred_operation_identity")
   @@index([accountId, instrumentId])
   @@map("deferred_operations")
+  @@schema("public")
 }
 
 model InstrumentPrice {
@@ -326,22 +386,45 @@ model InstrumentPrice {
   @@unique([instrumentId, source, quotedAt], name: "instrument_price_identity", map: "instrument_price_identity")
   @@index([instrumentId, quotedAt(sort: Desc)])
   @@map("instrument_prices")
+  @@schema("public")
 }
 
-model RawImport {
+// Импорт с точки зрения человека: статус и ошибка. Байты отчёта живут в схеме
+// воркера — он их получает и он ими владеет.
+model Import {
   id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountId String   @map("account_id") @db.Uuid
   source    String // sber | csv | bybit | tinvest
   // sha256 от содержимого, не от имени: один и тот же отчёт под другим именем
   // остаётся тем же отчётом.
   fileHash  String   @map("file_hash")
-  payload   Bytes
-  status    String // pending | parsed | failed
+  // uploaded | parsing | parsed | failed — закрытый список, CHECK в базе.
+  status    String
   error     String?
+  // Итог применения: создано, пропущено, отложено. Хранится потому, что
+  // применение асинхронное и спросить «чем кончилось» больше не у кого.
+  result    Json?    @db.JsonB
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   deferred DeferredOperation[]
 
-  @@unique([accountId, fileHash], name: "raw_import_idempotency", map: "raw_import_idempotency")
+  @@unique([accountId, fileHash], name: "import_idempotency", map: "import_idempotency")
+  @@map("imports")
+  @@schema("public")
+}
+
+// Сырьё отчёта. Без внешнего ключа на imports: связь между схемами сервисов
+// жёсткой быть не должна.
+model RawImport {
+  id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  // Имя индекса задано явно: иначе Prisma ждёт своё (raw_imports_import_id_key)
+  // и считает расхождением то, что написано в миграции.
+  importId  String   @unique(map: "raw_import_per_import") @map("import_id") @db.Uuid
+  source    String
+  fileHash  String   @map("file_hash")
+  payload   Bytes
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
   @@map("raw_imports")
+  @@schema("ingestor")
 }

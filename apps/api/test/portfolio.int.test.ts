@@ -1,25 +1,36 @@
+import { randomUUID } from 'node:crypto'
 import { Test } from '@nestjs/testing'
 import { Money } from '@thesis/contracts'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { DbModule } from '../src/db/db.module.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
 import { ApplyImportService } from '../src/imports/apply-import.service.ts'
-import { RawImportService } from '../src/imports/raw-import.service.ts'
 import { PortfolioModule } from '../src/portfolio/portfolio.module.ts'
+import { TradesModule } from '../src/trades/trades.module.ts'
 import { PortfolioService } from '../src/portfolio/portfolio.service.ts'
-import { buildSberOperationsXlsx } from './fixtures/sber-operations.ts'
+import { TradesService } from '../src/trades/trades.service.ts'
+import { RabbitPublisher } from '../src/imports/rabbit.publisher.ts'
+import { sberOperations } from './fixtures/sber-operations.ts'
+import type { SberFixtureOptions } from './fixtures/sber-operations.ts'
 import { withTestDb } from './setup-db.ts'
 
 let db: Awaited<ReturnType<typeof withTestDb>>
 let moduleRef: Awaited<ReturnType<typeof createModule>>
 let portfolio: PortfolioService
 let imports: ApplyImportService
-let uploads: RawImportService
+let trades: TradesService
+
+// Публикация команды в тестах подменяется: живых обращений к брокеру из тестов
+// не бывает, а здесь проверяется применение операций, а не доставка.
+const publisher = { send: () => {} }
 
 async function createModule() {
   const ref = await Test.createTestingModule({
-    imports: [DbModule, ImportsModule, PortfolioModule],
-  }).compile()
+    imports: [DbModule, ImportsModule, PortfolioModule, TradesModule],
+  })
+    .overrideProvider(RabbitPublisher)
+    .useValue(publisher)
+    .compile()
   await ref.init()
   return ref
 }
@@ -40,7 +51,7 @@ beforeAll(async () => {
   moduleRef = await createModule()
   portfolio = moduleRef.get(PortfolioService)
   imports = moduleRef.get(ApplyImportService)
-  uploads = moduleRef.get(RawImportService)
+  trades = moduleRef.get(TradesService)
 })
 
 afterAll(async () => {
@@ -48,15 +59,23 @@ afterAll(async () => {
   await db.stop()
 })
 
+// Было «залить файл и применить». Разбор уехал в ingestor, поэтому импорт
+// создаётся строкой, а применение получает готовые операции.
+async function importFixture(
+  userId: string,
+  accountId: string,
+  options: SberFixtureOptions = {},
+): Promise<string> {
+  const row = await db.prisma.import.create({
+    data: { accountId, source: 'sber', fileHash: randomUUID(), status: 'uploaded' },
+  })
+  await imports.apply(userId, row.id, sberOperations(options))
+  return row.id
+}
+
 it('складывает остатки, затраты и реализованный результат по бумагам', async () => {
   const { userId, accountId } = await seedAccount('portfolio@example.com')
-  const { importId } = await uploads.upload(
-    userId,
-    accountId,
-    await buildSberOperationsXlsx(),
-    'operations.xlsx',
-  )
-  await imports.run(userId, importId)
+  await importFixture(userId, accountId)
 
   const { rows, totals, accounts, byCurrency } = await portfolio.summary(userId)
   const sber = rows.find((row) => row.symbol === 'SBER')
@@ -80,13 +99,7 @@ it('складывает остатки, затраты и реализован�
 
 it('показывает бумагу с отложенной продажей и помечает её неполной', async () => {
   const { userId, accountId } = await seedAccount('incomplete@example.com')
-  const { importId } = await uploads.upload(
-    userId,
-    accountId,
-    await buildSberOperationsXlsx({ uncoveredSell: true }),
-    'operations.xlsx',
-  )
-  await imports.run(userId, importId)
+  await importFixture(userId, accountId, { uncoveredSell: true })
 
   const { rows } = await portfolio.summary(userId)
   const gmkn = rows.find((row) => row.symbol === 'GMKN')
@@ -101,13 +114,7 @@ it('показывает бумагу с отложенной продажей �
 it('не показывает чужой портфель', async () => {
   const mine = await seedAccount('mine-portfolio@example.com')
   const other = await seedAccount('other-portfolio@example.com')
-  const { importId } = await uploads.upload(
-    other.userId,
-    other.accountId,
-    await buildSberOperationsXlsx(),
-    'operations.xlsx',
-  )
-  await imports.run(other.userId, importId)
+  await importFixture(other.userId, other.accountId)
 
   expect((await portfolio.summary(mine.userId)).rows).toEqual([])
 })
@@ -116,13 +123,7 @@ it('не показывает чужой портфель', async () => {
 // бумага без котировки показывается прочерком и в стоимость не входит.
 it('считает стоимость и нереализованный результат по последней цене', async () => {
   const { userId, accountId } = await seedAccount('valued@example.com')
-  const { importId } = await uploads.upload(
-    userId,
-    accountId,
-    await buildSberOperationsXlsx(),
-    'operations.xlsx',
-  )
-  await imports.run(userId, importId)
+  await importFixture(userId, accountId)
 
   const before = await portfolio.summary(userId)
   const sberBefore = before.rows.find((row) => row.symbol === 'SBER')
@@ -149,4 +150,155 @@ it('считает стоимость и нереализованный резу
   expect(money(after.totals.value)).toBe('2400')
   // LKOH цены не имеет и в стоимость не попал.
   expect(after.rows.find((row) => row.symbol === 'LKOH')?.value).toBeNull()
+})
+
+// --- Задача 24: итог по бумаге ------------------------------------------
+
+// Закрытая позиция: оценивать нечего, и итог полон без цены. Если бы он
+// требовал котировку, по проданной бумаге всегда был бы прочерк.
+it('итог закрытой позиции равен реализованному плюс её комиссии', async () => {
+  const { userId, accountId } = await seedAccount('total-closed@example.com')
+  await importFixture(userId, accountId)
+  // Докупленное продаётся целиком: остаток нулевой.
+  const sber = await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'SBER' } })
+  await trades.apply(userId, {
+    accountId,
+    instrumentId: sber.id,
+    side: 'sell',
+    quantity: '8',
+    price: '300',
+    fee: '0',
+    executedAt: '2026-10-09T10:00:00.000Z',
+  })
+
+  const { rows } = await portfolio.summary(userId)
+  const row = rows.find((item) => item.symbol === 'SBER')!
+
+  expect(money(row.quantity)).toBe('0')
+  expect(row.unrealizedPnl).toBeNull()
+  expect(money(row.totalPnl!)).toBe(Money.of(row.realizedPnl).plus(row.fees).toString())
+})
+
+// Открытая позиция с ценой: нереализованное считается от текущей котировки, и
+// оно входит в итог — иначе «итог по бумаге» отвечал бы только про проданное.
+it('итог открытой позиции считается от текущей цены', async () => {
+  const { userId, accountId } = await seedAccount('total-open@example.com')
+  await importFixture(userId, accountId)
+  const sber = await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'SBER' } })
+  await db.prisma.instrumentPrice.create({
+    data: {
+      instrumentId: sber.id,
+      source: 'moex',
+      price: '300',
+      quotedAt: new Date('2026-10-10T10:00:00.000Z'),
+    },
+  })
+
+  const { rows } = await portfolio.summary(userId)
+  const row = rows.find((item) => item.symbol === 'SBER')!
+
+  // Остаток 8 по 300 — это 2400; затраты и есть costBasisTotal.
+  expect(money(row.unrealizedPnl!)).toBe(Money.of('2400').minus(row.costBasisTotal).toString())
+  expect(money(row.totalPnl!)).toBe(
+    Money.of(row.realizedPnl).plus(row.unrealizedPnl!).plus(row.fees).toString(),
+  )
+})
+
+// Остаток есть, цены нет — итога не существует. Ноль здесь был бы враньём:
+// он читается как «ничего не заработал», а правда в том, что неизвестно.
+it('остаток без цены даёт прочерк, а не ноль', async () => {
+  const { userId, accountId } = await seedAccount('total-unpriced@example.com')
+  await importFixture(userId, accountId)
+  // Справочник и цены общие для всех пользователей, RLS на них нет: цену SBER
+  // мог записать соседний тест. Убираем её, иначе проверяется не то.
+  const sberId = (await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'SBER' } })).id
+  await db.prisma.instrumentPrice.deleteMany({ where: { instrumentId: sberId } })
+
+  const { rows } = await portfolio.summary(userId)
+  const row = rows.find((item) => item.symbol === 'SBER')!
+
+  expect(money(row.quantity)).not.toBe('0')
+  expect(row.unrealizedPnl).toBeNull()
+  expect(row.totalPnl).toBeNull()
+})
+
+// --- Задача 25: разрез по счетам ----------------------------------------
+
+// Бумажный счёт — воображаемая торговля. В строке он есть, в итоге его быть
+// не должно: иначе тренажёр подмешивается к настоящим деньгам.
+it('бумажный счёт виден строкой, но в итог по валюте не входит', async () => {
+  const { userId, accountId } = await seedAccount('paper@example.com')
+  await importFixture(userId, accountId)
+
+  const paper = await db.prisma.account.create({
+    data: { userId, provider: 'manual', kind: 'paper', baseCurrency: 'RUB' },
+  })
+  // Тренажёр должен «заработать»: с нулевым итогом тест не различал бы, входит
+  // бумажный счёт в сумму или нет — ноль не меняет ничего.
+  const gmkn = await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'GMKN' } })
+  await trades.apply(userId, {
+    accountId: paper.id,
+    instrumentId: gmkn.id,
+    side: 'buy',
+    quantity: '1',
+    price: '100',
+    fee: '0',
+    executedAt: '2026-10-09T10:00:00.000Z',
+  })
+  await trades.apply(userId, {
+    accountId: paper.id,
+    instrumentId: gmkn.id,
+    side: 'sell',
+    quantity: '1',
+    price: '150',
+    fee: '0',
+    executedAt: '2026-10-10T10:00:00.000Z',
+  })
+
+  const { accounts, byCurrency } = await portfolio.summary(userId)
+  const paperRow = accounts.find((row) => row.accountId === paper.id)
+
+  expect(paperRow).toBeDefined()
+  expect(paperRow!.kind).toBe('paper')
+  // Пятьдесят рублей воображаемой прибыли: именно их не должно быть в итоге.
+  expect(money(paperRow!.totalPnl)).toBe('50')
+  // Итог по рублям равен сумме небумажных счетов, и бумажный в него не попал.
+  const real = accounts
+    .filter((row) => row.kind !== 'paper')
+    .reduce((sum, row) => sum.plus(row.totalPnl), Money.of('0'))
+  expect(money(byCurrency.find((total) => total.currency === 'RUB')!.totalPnl)).toBe(
+    real.toString(),
+  )
+})
+
+// Доллар к рублю без курса не прибавить, и выдумывать его система не станет:
+// итогов столько, сколько валют.
+it('два счёта в разных валютах дают два итога, а не один', async () => {
+  const { userId } = await seedAccount('currencies@example.com')
+  // USD, а не USDT: колонка объявлена char(3) и четыре символа не принимает —
+  // запись об этом в docs/unknowns.md, потому что крипто-счёт так не завести.
+  await db.prisma.account.create({
+    data: { userId, provider: 'bybit', kind: 'exchange', baseCurrency: 'USD' },
+  })
+
+  const { byCurrency } = await portfolio.summary(userId)
+
+  expect(byCurrency.map((total) => total.currency).toSorted()).toEqual(['RUB', 'USD'])
+})
+
+// Счёт без сделок показывает нули, а не исчезает: пропавший счёт выглядит
+// потерянным, и человек идёт искать, куда делись деньги.
+it('счёт без сделок остаётся в разрезе с нулями', async () => {
+  const { userId } = await seedAccount('empty-account@example.com')
+  const empty = await db.prisma.account.create({
+    data: { userId, provider: 'tinvest', kind: 'broker', baseCurrency: 'RUB' },
+  })
+
+  const { accounts } = await portfolio.summary(userId)
+  const row = accounts.find((item) => item.accountId === empty.id)
+
+  expect(row).toBeDefined()
+  expect(money(row!.totalPnl)).toBe('0')
+  expect(money(row!.realizedPnl)).toBe('0')
+  expect(money(row!.unrealizedPnl)).toBe('0')
 })

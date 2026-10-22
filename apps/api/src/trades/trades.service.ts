@@ -23,12 +23,18 @@ export class TradesService {
 
   // `linked: false` — без привязанного решения. Фильтрует база: после импорта
   // за год таких сделок десятки.
-  list(userId: string, options: { linked?: boolean; instrumentId?: string } = {}) {
+  list(
+    userId: string,
+    options: { linked?: boolean; instrumentId?: string; accountId?: string } = {},
+  ) {
     return this.prisma.withUser(userId, (tx) =>
       tx.trade.findMany({
         where: {
           ...(options.linked === false ? { decisions: { none: {} } } : {}),
           ...(options.instrumentId ? { instrumentId: options.instrumentId } : {}),
+          // Счётом фильтрует экран: у человека бывает два счёта одного брокера,
+          // и сделки по одной бумаге на них выглядят дублями.
+          ...(options.accountId ? { accountId: options.accountId } : {}),
         },
         orderBy: { executedAt: 'desc' },
       }),

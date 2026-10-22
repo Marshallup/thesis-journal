@@ -1,11 +1,10 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common'
+import { ConflictException, Injectable } from '@nestjs/common'
 import { Money } from '@thesis/contracts'
+import type { InstrumentClass, RawOperation } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
 import { MatchingService } from '../decisions/matching.service.ts'
 import { InstrumentsService } from '../instruments/instruments.service.ts'
 import { TradesService } from '../trades/trades.service.ts'
-import { parseSberXlsx } from './parsers/sber-xlsx.ts'
-import type { InstrumentClass, RawOperation } from './parsers/sber-xlsx.ts'
 
 // Продажа, под которую ещё нет покупок: ждёт отчёта за прошлый год.
 // quantity — размер продажи, missing — чего не хватило: это разные числа.
@@ -109,22 +108,18 @@ export class ApplyImportService {
     private readonly matching: MatchingService,
   ) {}
 
-  // userId обязателен: без него RLS не покажет ни импорт, ни счёт.
-  async run(userId: string, importId: string): Promise<ImportResult> {
+  // Операции приходят аргументом: разбирает их воркер, а это применение.
+  // userId обязателен — без него RLS не покажет ни импорт, ни счёт.
+  async apply(userId: string, importId: string, operations: RawOperation[]): Promise<ImportResult> {
     const { raw, account } = await this.prisma.withUser(userId, async (tx) => {
-      const found = await tx.rawImport.findUniqueOrThrow({ where: { id: importId } })
+      const found = await tx.import.findUniqueOrThrow({ where: { id: importId } })
       return {
         raw: found,
         account: await tx.account.findUniqueOrThrow({ where: { id: found.accountId } }),
       }
     })
 
-    if (raw.source !== 'sber') {
-      throw new BadRequestException(`источник «${raw.source}» пока не разбирается`)
-    }
-
     try {
-      const operations = await parseSberXlsx(Buffer.from(raw.payload))
       const trades = inOrder(operations.filter((op) => op.kind === 'trade').map(asTrade))
       const cash = inOrder(operations.filter((op) => op.kind === 'cash').map(asCash))
 
@@ -209,9 +204,15 @@ export class ApplyImportService {
           })
         }
 
-        await tx.rawImport.update({
+        await tx.import.update({
           where: { id: importId },
-          data: { status: 'parsed', error: null },
+          data: {
+            status: 'parsed',
+            error: null,
+            // Итог сохраняется, а не возвращается: применение случилось по
+            // событию, и спросить «чем кончилось» больше не у кого.
+            result: { created, skipped, deferred: deferred.length },
+          },
         })
       })
 
@@ -229,7 +230,7 @@ export class ApplyImportService {
 
       // Своей транзакцией: импортная уже откачена.
       await this.prisma.withUser(userId, (tx) =>
-        tx.rawImport.update({
+        tx.import.update({
           where: { id: importId },
           data: { status: 'failed', error: error instanceof Error ? error.message : String(error) },
         }),

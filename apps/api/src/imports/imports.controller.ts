@@ -19,9 +19,8 @@ import { z } from 'zod'
 import { CurrentUser } from '../auth/current-user.decorator.ts'
 import type { AuthenticatedUser } from '../auth/current-user.decorator.ts'
 import { ApplyImportService } from './apply-import.service.ts'
-import type { ImportResult } from './apply-import.service.ts'
-import { RawImportService } from './raw-import.service.ts'
-import type { UploadResult } from './raw-import.service.ts'
+import { ImportsService } from './imports.service.ts'
+import type { ImportStatus, UploadResult } from './imports.service.ts'
 
 // Десять мегабайт: брокерский отчёт за год укладывается с запасом, а без
 // границы загрузка становится способом занять диск.
@@ -32,7 +31,7 @@ const MAX_BYTES = 10 * 1024 * 1024
 @ApiBearerAuth()
 export class ImportsController {
   constructor(
-    private readonly imports: RawImportService,
+    private readonly imports: ImportsService,
     private readonly apply: ApplyImportService,
   ) {}
 
@@ -51,6 +50,9 @@ export class ImportsController {
     const result = await this.imports.upload(user.userId, accountId, file.buffer, file.originalname)
     // 201 только на настоящую запись. Дубль — это не создание, а указание на
     // уже существующий импорт, и честный код для него 200.
+    //
+    // Разбор к этому моменту ещё не случился: команда ушла воркеру, и экран
+    // следит за статусом. Притворяться, что ответ окончательный, нельзя.
     response.status(result.status === 'duplicate' ? 200 : 201)
     return result
   }
@@ -63,17 +65,29 @@ export class ImportsController {
     return this.apply.pending(user.userId)
   }
 
-  // Отдельным запросом: сохранённый отчёт переживает неудачный разбор, и
-  // повторить применение можно, не загружая файл заново.
-  @Post(':id/apply')
-  // 200, а не дефолтный для POST 201: по этому адресу ничего не создаётся,
-  // применение меняет состояние уже существующего импорта.
-  @HttpCode(200)
-  @ApiOperation({ summary: 'Применить залитый отчёт: сделки, лоты, позиции, деньги' })
-  run(
+  // Разбор асинхронный, поэтому экрану нужен статус: uploaded → parsing →
+  // parsed либо failed с причиной.
+  @Get(':id')
+  @ApiOperation({ summary: 'Статус импорта: разбирается, применён или отказал' })
+  status(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', { schema: z.uuid() }) id: string,
-  ): Promise<ImportResult> {
-    return this.apply.run(user.userId, id)
+  ): Promise<ImportStatus> {
+    return this.imports.status(user.userId, id)
+  }
+
+  // Отдельным запросом: сырьё переживает неудачный разбор, и повторить можно,
+  // не загружая файл заново. Теперь это не «примени», а «разбери снова» —
+  // байты лежат у воркера, и применение случится по событию.
+  @Post(':id/apply')
+  // 200, а не дефолтный для POST 201: по этому адресу ничего не создаётся,
+  // меняется состояние уже существующего импорта.
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Разобрать залитый отчёт заново' })
+  reparse(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', { schema: z.uuid() }) id: string,
+  ): Promise<ImportStatus> {
+    return this.imports.reparse(user.userId, id)
   }
 }
