@@ -203,13 +203,24 @@ export function ImportPage() {
           disabled={accountId === '' || file === null || send.isPending}
           className="self-start rounded-sm border border-rule px-3 py-1.5 text-sm disabled:text-ink-muted"
         >
-          {send.isPending ? 'Применяем' : 'Загрузить и применить'}
+          {send.isPending ? 'Разбираем' : 'Загрузить отчёт'}
         </button>
       </form>
 
       {/* aria-live: результат появляется без перезагрузки, и экранный читатель
           должен его озвучить. */}
       <div aria-live="polite" className="mt-6">
+        {send.isPending ? (
+          // Разбор идёт в другом процессе, и ждать можно заметно дольше
+          // запроса. Надписи на кнопке мало: человек не знает, его файл
+          // обрабатывают или всё зависло.
+          <p className="border-t border-rule pt-3 text-sm text-ink-muted">
+            Файл принят, его разбирает фоновый процесс. Обычно пара секунд. Если ждёте дольше минуты
+            — скорее всего не запущен воркер (<span className="tabular">pnpm dev</span> поднимает
+            его вместе с остальным).
+          </p>
+        ) : null}
+
         {send.isSuccess ? (
           <div className="border-t border-rule pt-3 text-sm">
             {send.data.status === 'failed' ? (
@@ -320,7 +331,7 @@ export function ImportPage() {
                 disabled={reapply.isPending}
                 className="mt-2 rounded-sm border border-rule px-3 py-1.5 text-sm disabled:text-ink-muted"
               >
-                {reapply.isPending ? 'Применяем' : 'Применить ещё раз'}
+                {reapply.isPending ? 'Разбираем' : 'Разобрать ещё раз'}
               </button>
             </div>
           ))}

@@ -1,13 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../../shared/api/client.ts'
 import { useSession } from '../../shared/api/session.tsx'
 import { accountLabel } from '../../shared/ui/account-label.ts'
+import type { LabelledAccount } from '../../shared/ui/account-label.ts'
 import { formatMoscowTime } from '../../shared/ui/format.ts'
 import { Money } from '../../shared/ui/money.tsx'
 
 type Trade = {
   id: string
+  accountId: string
   instrumentId: string
   side: 'buy' | 'sell'
   quantity: string
@@ -43,7 +46,13 @@ type Decision = { id: string; unrealized: boolean; trades: unknown[] }
 export function TradesPage() {
   const { signOut } = useSession()
 
-  const trades = useQuery({ queryKey: ['trades'], queryFn: () => api<Trade[]>('/trades') })
+  // Фильтр по счёту: два счёта одного брокера различаются только хвостом
+  // идентификатора, и сделки по одной бумаге на них выглядят дублями.
+  const [accountId, setAccountId] = useState('')
+  const trades = useQuery({
+    queryKey: ['trades', accountId],
+    queryFn: () => api<Trade[]>(accountId ? `/trades?accountId=${accountId}` : '/trades'),
+  })
   const instruments = useQuery({
     queryKey: ['instruments'],
     queryFn: () => api<Instrument[]>('/instruments'),
@@ -51,7 +60,7 @@ export function TradesPage() {
 
   const accounts = useQuery({
     queryKey: ['accounts'],
-    queryFn: () => api<{ id: string }[]>('/accounts'),
+    queryFn: () => api<LabelledAccount[]>('/accounts'),
   })
   const portfolio = useQuery({
     queryKey: ['portfolio'],
@@ -67,6 +76,15 @@ export function TradesPage() {
   const idle = (decisions.data ?? []).filter(
     (decision) => decision.unrealized && decision.trades.length === 0,
   ).length
+
+  // Подписи счетов одни и те же в обеих таблицах: иначе «Сбер · #4e09» вверху
+  // и «Сбер» внизу читались бы как разные счета.
+  const accountNames = new Map(
+    (accounts.data ?? []).map((account) => [
+      account.id,
+      accountLabel(account, accounts.data ?? []),
+    ]),
+  )
 
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
@@ -214,6 +232,26 @@ export function TradesPage() {
         </p>
       ) : null}
 
+      {accounts.data && accounts.data.length > 1 ? (
+        // Появляется только когда счетов больше одного: единственный счёт
+        // фильтровать не от чего, а лишний контрол — шум.
+        <label className="mt-6 flex items-baseline gap-2 text-sm">
+          <span className="text-ink-muted">Счёт</span>
+          <select
+            value={accountId}
+            onChange={(event) => setAccountId(event.target.value)}
+            className="rounded-sm border border-rule bg-surface px-2 py-1"
+          >
+            <option value="">все счета</option>
+            {accounts.data.map((account) => (
+              <option key={account.id} value={account.id}>
+                {accountLabel(account, accounts.data ?? [])}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
       {trades.isSuccess && trades.data.length > 0 ? (
         // Регистр, а не карточки: тонкие линейки, числа по правому краю,
         // высота строки 32px.
@@ -222,6 +260,11 @@ export function TradesPage() {
             <tr className="border-b border-rule text-ink-muted">
               <th scope="col" className="h-8 text-left font-medium">
                 Дата, МСК
+              </th>
+              {/* Счёт в строке, а не только в фильтре: при двух счетах одного
+                  брокера иначе непонятно, к чему относится сделка. */}
+              <th scope="col" className="h-8 text-left font-medium">
+                Счёт
               </th>
               <th scope="col" className="h-8 text-left font-medium">
                 Инструмент
@@ -244,6 +287,7 @@ export function TradesPage() {
             {trades.data.map((trade) => (
               <tr key={trade.id} className="border-b border-rule">
                 <td className="h-8 tabular">{formatMoscowTime(trade.executedAt)}</td>
+                <td className="h-8 text-ink-muted">{accountNames.get(trade.accountId) ?? '—'}</td>
                 {/* Пока символ не доехал — прочерк, а не часть uuid: обрезанный
                     идентификатор выглядит как данные, но ничего не значит. */}
                 <td className="h-8">{symbols.get(trade.instrumentId) ?? '—'}</td>
