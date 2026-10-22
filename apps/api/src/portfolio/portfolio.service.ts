@@ -24,6 +24,28 @@ export type PortfolioRow = {
   totalPnl: string | null
 }
 
+// Счёт целиком: своё имя, своя валюта и свой итог. Нужен потому, что счетов
+// бывает несколько — брокерский, ИИС, крипта, тренажёр, — и складывать их в
+// одно число можно не всегда.
+export type PortfolioAccount = {
+  accountId: string
+  name: string | null
+  provider: string
+  kind: string
+  baseCurrency: string
+  isIis: boolean
+  createdAt: string
+  realizedPnl: string
+  unrealizedPnl: string
+  fees: string
+  dividends: string
+  totalPnl: string
+}
+
+// Итог на валюту, а не один на всё: доллар к рублю без курса не прибавить, а
+// конвертации в проекте пока нет вовсе.
+export type PortfolioCurrencyTotal = { currency: string; totalPnl: string }
+
 export type PortfolioTotals = {
   // Стоимость только тех бумаг, по которым есть цена.
   value: string
@@ -32,17 +54,18 @@ export type PortfolioTotals = {
   fees: string
   dividends: string
   deposits: string
-  // Итог по счёту: реализованное, нереализованное, все комиссии и дивиденды.
-  // От суммы итогов по бумагам отличается ровно на то, что к бумаге не
-  // привязано — депозитарные комиссии и дивиденды без инструмента.
-  totalPnl: string
 }
 
 @Injectable()
 export class PortfolioService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async summary(userId: string): Promise<{ rows: PortfolioRow[]; totals: PortfolioTotals }> {
+  async summary(userId: string): Promise<{
+    rows: PortfolioRow[]
+    accounts: PortfolioAccount[]
+    byCurrency: PortfolioCurrencyTotal[]
+    totals: PortfolioTotals
+  }> {
     return this.prisma.withUser(userId, async (tx) => {
       // По бумаге, а не по паре «счёт + бумага»: вопрос звучит «сколько у меня
       // SBER». ИИС и брокерский при этом смешиваются — см. docs/unknowns.md.
@@ -78,8 +101,48 @@ export class PortfolioService {
          order by i.symbol
       `
 
-      const cash = await tx.$queryRaw<{ kind: string; amount: string }[]>`
-        select kind, sum(amount)::text as amount from cash_ledger group by kind
+      // Деньги в разрезе счёта и вида: из этих же строк складываются и общие
+      // суммы, чтобы «комиссии» на двух экранах не разъехались.
+      const cash = await tx.$queryRaw<{ accountId: string; kind: string; amount: string }[]>`
+        select account_id as "accountId", kind, sum(amount)::text as amount
+          from cash_ledger
+         group by account_id, kind
+      `
+
+      const accounts = await tx.$queryRaw<
+        Omit<
+          PortfolioAccount,
+          'realizedPnl' | 'unrealizedPnl' | 'fees' | 'dividends' | 'totalPnl'
+        >[]
+      >`
+        select id as "accountId",
+               name,
+               provider,
+               kind,
+               base_currency as "baseCurrency",
+               is_iis as "isIis",
+               created_at as "createdAt"
+          from accounts
+         order by created_at
+      `
+
+      // Позиции в разрезе счёта. Цены присоединяются ниже, в TypeScript, как и
+      // в строках по бумагам: «цены нет» должно значить одно и то же везде.
+      const positions = await tx.$queryRaw<
+        {
+          accountId: string
+          instrumentId: string
+          quantity: string
+          costBasisTotal: string
+          realizedPnl: string
+        }[]
+      >`
+        select account_id as "accountId",
+               instrument_id as "instrumentId",
+               quantity::text,
+               cost_basis_total::text as "costBasisTotal",
+               realized_pnl::text as "realizedPnl"
+          from positions
       `
       const prices = new Map(
         (
@@ -124,7 +187,12 @@ export class PortfolioService {
         }
       })
 
-      const byKind = new Map(cash.map((entry) => [entry.kind, Money.of(entry.amount)]))
+      const money = (entry: { amount: string } | undefined) =>
+        entry ? Money.of(entry.amount) : zero
+      const byKind = new Map<string, Money>()
+      for (const entry of cash) {
+        byKind.set(entry.kind, (byKind.get(entry.kind) ?? zero).plus(entry.amount))
+      }
       const realized = rows.reduce((sum, row) => sum.plus(row.realizedPnl), zero)
       // Все комиссии счёта, а не только привязанные к бумагам: депозитарную
       // тоже заплатили.
@@ -136,8 +204,55 @@ export class PortfolioService {
         zero,
       )
 
+      const byAccount = accounts.map((account) => {
+        let realizedOf = zero
+        let unrealizedOf = zero
+        for (const position of positions) {
+          if (position.accountId !== account.accountId) continue
+          realizedOf = realizedOf.plus(position.realizedPnl)
+          const quote = prices.get(position.instrumentId)
+          // Бумага без цены в нереализованное не входит — ровно как в строках
+          // по бумагам: выдуманная цена хуже отсутствующей.
+          if (!quote || Money.of(position.quantity).eq(zero)) continue
+          unrealizedOf = unrealizedOf.plus(
+            Money.of(position.quantity).times(quote.price).minus(position.costBasisTotal),
+          )
+        }
+        const feesOf = money(
+          cash.find((entry) => entry.accountId === account.accountId && entry.kind === 'fee'),
+        )
+        const dividendsOf = money(
+          cash.find((entry) => entry.accountId === account.accountId && entry.kind === 'dividend'),
+        )
+        return {
+          ...account,
+          createdAt: new Date(account.createdAt).toISOString(),
+          realizedPnl: realizedOf.toString(),
+          unrealizedPnl: unrealizedOf.toString(),
+          fees: feesOf.toString(),
+          dividends: dividendsOf.toString(),
+          totalPnl: realizedOf.plus(unrealizedOf).plus(feesOf).plus(dividendsOf).toString(),
+        }
+      })
+
+      const perCurrency = new Map<string, Money>()
+      for (const account of byAccount) {
+        // Бумажный счёт в итог не входит: воображаемая торговля не смешивается
+        // с настоящими деньгами. В строке он остаётся и помечен.
+        if (account.kind === 'paper') continue
+        perCurrency.set(
+          account.baseCurrency,
+          (perCurrency.get(account.baseCurrency) ?? zero).plus(account.totalPnl),
+        )
+      }
+
       return {
         rows: priced,
+        accounts: byAccount,
+        byCurrency: [...perCurrency].map(([currency, total]) => ({
+          currency,
+          totalPnl: total.toString(),
+        })),
         totals: {
           value: value.toString(),
           unrealizedPnl: unrealized.toString(),
@@ -145,8 +260,6 @@ export class PortfolioService {
           fees: fees.toString(),
           dividends: dividends.toString(),
           deposits: (byKind.get('deposit') ?? zero).toString(),
-          // Взносы в итог не входят: это не заработок, а принесённые деньги.
-          totalPnl: realized.plus(unrealized).plus(fees).plus(dividends).toString(),
         },
       }
     })

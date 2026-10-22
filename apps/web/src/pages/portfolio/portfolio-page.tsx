@@ -26,8 +26,9 @@ type Totals = {
   fees: string
   dividends: string
   deposits: string
-  totalPnl: string
 }
+
+type CurrencyTotal = { currency: string; totalPnl: string }
 
 // Знак читается без цвета: минус стоит в самом числе, цвет — вторая подсказка.
 function tone(value: string): string {
@@ -38,11 +39,19 @@ function tone(value: string): string {
 export function PortfolioPage() {
   const portfolio = useQuery({
     queryKey: ['portfolio'],
-    queryFn: () => api<{ rows: Row[]; totals: Totals }>('/portfolio'),
+    queryFn: () =>
+      api<{
+        rows: Row[]
+        totals: Totals
+        byCurrency: CurrencyTotal[]
+        accounts: { kind: string }[]
+      }>('/portfolio'),
   })
 
   const rows = portfolio.data?.rows ?? []
   const totals = portfolio.data?.totals
+  const byCurrency = portfolio.data?.byCurrency ?? []
+  const hasPaper = portfolio.data?.accounts.some((account) => account.kind === 'paper') ?? false
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
@@ -198,20 +207,30 @@ export function PortfolioPage() {
                 <Money value={totals.dividends} />
               </dd>
             </div>
-            <div className="flex justify-between border-t border-rule pt-1">
-              <dt>Итог по всем счетам</dt>
-              <dd className={`tabular ${tone(totals.totalPnl)}`}>
-                <Money value={totals.totalPnl} />
-              </dd>
-            </div>
+            {byCurrency.map((total) => (
+              <div key={total.currency} className="flex justify-between border-t border-rule pt-1">
+                <dt>Итого, {total.currency}</dt>
+                <dd className={`tabular ${tone(total.totalPnl)}`}>
+                  <Money value={total.totalPnl} />
+                </dd>
+              </div>
+            ))}
           </dl>
 
           <p className="mt-3 text-ink-muted">
             Итог — сумма всех строк выше, кроме взносов: комиссии и дивиденды входят со своим
-            знаком. Реализованный результат при этом считается без комиссий — у импортированных
-            сделок комиссия к сделке не привязана и лежит отдельной строкой, в том числе уплаченная
-            за бумаги, которые ещё не проданы.
+            знаком. Считается на каждую валюту отдельно — курса в системе нет. Реализованный
+            результат при этом считается без комиссий: у импортированных сделок комиссия к сделке не
+            привязана и лежит отдельной строкой, в том числе уплаченная за бумаги, которые ещё не
+            проданы.
           </p>
+
+          {hasPaper ? (
+            <p className="mt-2 text-ink-muted">
+              Бумажные счета в итог не входят, но в строках по бумагам учтены: остатки считаются по
+              бумаге, а не по паре «счёт и бумага». Полное отделение — отдельная задача.
+            </p>
+          ) : null}
         </section>
       ) : null}
     </main>

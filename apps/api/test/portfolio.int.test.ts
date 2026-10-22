@@ -58,7 +58,7 @@ it('складывает остатки, затраты и реализован�
   )
   await imports.run(userId, importId)
 
-  const { rows, totals } = await portfolio.summary(userId)
+  const { rows, totals, accounts, byCurrency } = await portfolio.summary(userId)
   const sber = rows.find((row) => row.symbol === 'SBER')
 
   // Куплено 10 по 250.5 и 5 по 251, продано 7 — остаток 8.
@@ -71,9 +71,11 @@ it('складывает остатки, затраты и реализован�
   expect(money(totals.dividends)).toBe('340.2')
   // Итог — сумма всех составляющих, а не одна из них. Цен в этом прогоне нет,
   // поэтому нереализованное не участвует.
-  expect(money(totals.totalPnl)).toBe(
-    Money.of(totals.realizedPnl).plus(totals.fees).plus(totals.dividends).toString(),
-  )
+  const expected = Money.of(totals.realizedPnl).plus(totals.fees).plus(totals.dividends)
+  expect(accounts).toHaveLength(1)
+  expect(money(accounts[0]!.totalPnl)).toBe(expected.toString())
+  // Счёт один и рублёвый: итог по валютам — одна строка с тем же числом.
+  expect(byCurrency).toEqual([{ currency: 'RUB', totalPnl: expected.toString() }])
 })
 
 it('показывает бумагу с отложенной продажей и помечает её неполной', async () => {
