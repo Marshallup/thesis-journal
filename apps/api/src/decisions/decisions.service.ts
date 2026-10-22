@@ -1,8 +1,26 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
+import { Money } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
+import { PricesService } from '../prices/prices.service.ts'
 import { ContextSnapshotService } from './context-snapshot.service.ts'
 import type { CreateDecision, ReviseDecision } from './dto.ts'
 import { MatchingService } from './matching.service.ts'
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// Чем кончилось решение. Считается на чтении: исход меняется с каждой сделкой
+// и с каждой котировкой, а хранимый производный показатель разъезжается — та
+// же причина, по которой не хранится средняя цена.
+export type DecisionOutcome = {
+  realizedPnl: string
+  // null, когда по открытому остатку нет цены: итога тогда не существует.
+  unrealizedPnl: string | null
+  totalPnl: string | null
+  // Остаток лотов, открытых сделками этого решения.
+  openQuantity: string
+  // Сколько дней горизонта осталось; отрицательное — истёк.
+  daysLeft: number
+}
 
 @Injectable()
 export class DecisionsService {
@@ -10,6 +28,7 @@ export class DecisionsService {
     private readonly prisma: PrismaService,
     private readonly matching: MatchingService,
     private readonly snapshots: ContextSnapshotService,
+    private readonly prices: PricesService,
   ) {}
 
   // Ручная привязка пачкой с экрана разметки. Окно горизонта здесь не
@@ -90,6 +109,15 @@ export class DecisionsService {
     // Срабатывает редко — сделка обязана быть позже решения, — но вызов
     // предусмотрен планом и служит точкой повторного прогона.
     await this.matching.matchDecision(userId, decision.id)
+
+    // Сделки, названные явно, привязываются здесь: окно горизонта к ним не
+    // применяется, потому что решение задним числом пишется именно про
+    // прошлую сделку. Честность держит пометка post_factum, а не отказ
+    // привязать. Привязка идемпотентна, поэтому уже найденная автоматом
+    // сделка просто попадёт в skipped.
+    if (dto.tradeIds && dto.tradeIds.length > 0) {
+      await this.linkTrades(userId, decision.id, dto.tradeIds)
+    }
     return decision
   }
 
@@ -125,9 +153,9 @@ export class DecisionsService {
 
   // Действующее состояние — последняя ревизия, если она есть. История отдаётся
   // целиком: в ней и смысл дневника, а не только в текущей редакции.
-  list(userId: string) {
-    return this.prisma.withUser(userId, (tx) =>
-      tx.decision.findMany({
+  async list(userId: string) {
+    const { decisions, realized, openLots } = await this.prisma.withUser(userId, async (tx) => ({
+      decisions: await tx.decision.findMany({
         orderBy: { createdAt: 'desc' },
         include: {
           revisions: { orderBy: { createdAt: 'desc' } },
@@ -136,6 +164,78 @@ export class DecisionsService {
           trades: { include: { trade: true }, orderBy: { createdAt: 'asc' } },
         },
       }),
-    )
+
+      // Списание относится к решению, если решению принадлежит сделка с любой
+      // его стороны: покупка, открывшая лот, или продажа, его закрывшая. Для
+      // решения купить это судьба открытых им лотов, для решения продать —
+      // результат самой продажи.
+      //
+      // distinct обязателен: когда обе сделки принадлежат одному решению,
+      // join нашёл бы списание дважды и удвоил результат.
+      realized: await tx.$queryRaw<{ decisionId: string; realizedPnl: string }[]>`
+        with touched as (
+          select distinct dt.decision_id, c.id, c.realized_pnl
+            from lot_consumptions c
+            join lots l on l.id = c.lot_id
+            join decision_trades dt on dt.trade_id in (c.trade_id, l.open_trade_id)
+        )
+        select decision_id as "decisionId", sum(realized_pnl)::text as "realizedPnl"
+          from touched
+         group by decision_id
+      `,
+
+      // Открытые лоты решения. Цена присоединяется ниже, в TypeScript: там же,
+      // где у портфеля, чтобы «цены нет» значило везде одно и то же.
+      openLots: await tx.$queryRaw<
+        {
+          decisionId: string
+          instrumentId: string
+          qtyRemaining: string
+          costRemaining: string
+        }[]
+      >`
+        select dt.decision_id as "decisionId",
+               l.instrument_id as "instrumentId",
+               l.qty_remaining::text as "qtyRemaining",
+               l.cost_remaining::text as "costRemaining"
+          from lots l
+          join decision_trades dt on dt.trade_id = l.open_trade_id
+         where l.qty_remaining > 0
+      `,
+    }))
+
+    const prices = new Map((await this.prices.latest()).map((row) => [row.instrumentId, row.price]))
+    const realizedOf = new Map(realized.map((row) => [row.decisionId, row.realizedPnl]))
+    const zero = Money.of('0')
+    const now = Date.now()
+
+    return decisions.map((decision) => {
+      const lots = openLots.filter((lot) => lot.decisionId === decision.id)
+      let unrealized = zero
+      let quantity = zero
+      let priced = true
+
+      for (const lot of lots) {
+        quantity = quantity.plus(lot.qtyRemaining)
+        const price = prices.get(lot.instrumentId)
+        if (!price) {
+          priced = false
+          continue
+        }
+        unrealized = unrealized.plus(
+          Money.of(lot.qtyRemaining).times(price).minus(lot.costRemaining),
+        )
+      }
+
+      const result = Money.of(realizedOf.get(decision.id) ?? '0')
+      const outcome: DecisionOutcome = {
+        realizedPnl: result.toString(),
+        unrealizedPnl: priced ? unrealized.toString() : null,
+        totalPnl: priced ? result.plus(unrealized).toString() : null,
+        openQuantity: quantity.toString(),
+        daysLeft: decision.horizonDays - Math.floor((now - decision.createdAt.getTime()) / DAY_MS),
+      }
+      return { ...decision, outcome }
+    })
   }
 }
