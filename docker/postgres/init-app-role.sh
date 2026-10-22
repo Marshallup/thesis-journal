@@ -63,6 +63,16 @@ where exists (select 1 from pg_namespace where nspname = 'ingestor')
 -- Единственное исключение из «только своя схема»: без справочника воркер не
 -- знает, какие бумаги опрашивать. Только select и только эта таблица —
 -- запись в `public` ему недоступна. Запись в docs/unknowns.md.
+--
+-- Под условием, как и гранты на схему ingestor: на свежем кластере этот скрипт
+-- выполняется из initdb.d, то есть до миграций, и справочника ещё нет.
+-- Безусловный grant там падал и ронял инициализацию контейнера целиком.
+-- Право на уже существующий справочник выдаёт сама миграция.
 grant usage on schema public to :"ingestor_role";
-grant select on table public.instruments to :"ingestor_role";
+
+select format('grant select on table public.instruments to %I', :'ingestor_role')
+where exists (
+  select 1 from pg_tables where schemaname = 'public' and tablename = 'instruments'
+)
+\gexec
 SQL

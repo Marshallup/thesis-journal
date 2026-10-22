@@ -11,6 +11,10 @@ const initScript = resolve(repoRoot, 'docker/postgres/init-app-role.sh')
 // поэтому разойтись со строкой подключения они не могут.
 const appRole = 'thesis_app'
 const appPassword = 'devpassword'
+// Скрипт ролей заводит и роль воркера: без этих переменных он падает, а с ним
+// и инициализация контейнера. Копия helper'а живёт в apps/ingestor/test —
+// объединить в общий пакет, когда появится третий сервис.
+const ingestorRole = 'thesis_ingestor'
 
 // Тип выписан явно: выведенный ссылается на внутренние файлы генерата Prisma,
 // и TypeScript справедливо считает такой тип непортабельным (TS2883).
@@ -30,7 +34,12 @@ export async function withTestDb(): Promise<TestDb> {
   // поэтому entrypoint выполняет его как обычный initdb-скрипт — до миграций,
   // иначе alter default privileges не накроет их таблицы.
   const container = await new PostgreSqlContainer('postgres:18-alpine')
-    .withEnvironment({ APP_DB_ROLE: appRole, APP_DB_PASSWORD: appPassword })
+    .withEnvironment({
+      APP_DB_ROLE: appRole,
+      APP_DB_PASSWORD: appPassword,
+      INGESTOR_DB_ROLE: ingestorRole,
+      INGESTOR_DB_PASSWORD: appPassword,
+    })
     .withCopyFilesToContainer([
       {
         source: initScript,

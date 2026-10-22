@@ -27,7 +27,7 @@ function answerWith(body: unknown) {
 
 beforeAll(async () => {
   db = await withTestDb()
-  process.env.APP_DATABASE_URL = db.appUrl
+  process.env.INGESTOR_DATABASE_URL = db.url
   moduleRef = await createModule()
   prices = moduleRef.get(PricesService)
 })
@@ -45,6 +45,21 @@ async function seedInstrument(symbol: string) {
   return db.prisma.instrument.create({ data: { symbol, class: 'equity', currency: 'RUB' } })
 }
 
+// Переехало из api вместе с опросом: latest() и history() остались там, а
+// воркер теперь владеет собственной таблицей и проверяется по ней напрямую.
+async function latestPrices(): Promise<{ instrumentId: string; price: string }[]> {
+  return db.prisma.$queryRaw`
+    select distinct on (instrument_id)
+           instrument_id as "instrumentId", price::text
+      from ingestor.instrument_prices
+     order by instrument_id, quoted_at desc
+  `
+}
+
+async function pricePoints(instrumentId: string): Promise<number> {
+  return db.prisma.providerPrice.count({ where: { instrumentId } })
+}
+
 it('сохраняет цены только тех бумаг, что есть в справочнике', async () => {
   const sber = await seedInstrument('SBER')
   answerWith(moexResponse)
@@ -54,7 +69,7 @@ it('сохраняет цены только тех бумаг, что есть 
   // В ответе три бумаги, в справочнике одна: остальные нам не нужны.
   expect(result.seen).toBe(2)
   expect(result.saved).toBe(1)
-  const latest = await prices.latest()
+  const latest = await latestPrices()
   expect(latest).toHaveLength(1)
   expect(latest[0]?.instrumentId).toBe(sber.id)
   expect(Money.of(latest[0]!.price).toString()).toBe('291.68')
@@ -68,7 +83,7 @@ it('берёт MARKETPRICE, когда сделок не было', async () => 
 
   await prices.refresh()
 
-  const latest = await prices.latest()
+  const latest = await latestPrices()
   const quote = latest.find((row) => row.instrumentId === lkoh.id)
   expect(Money.of(quote!.price).toString()).toBe('7301.5')
 })
@@ -92,11 +107,10 @@ it('опоздавшая точка не затирает свежую', async (
   answerWith(moexResponse)
   await prices.refresh()
 
-  const latest = await prices.latest()
+  const latest = await latestPrices()
   const quote = latest.find((row) => row.instrumentId === sber.id)
   expect(Money.of(quote!.price).toString()).toBe('295.1')
 
   // При этом сама точка не потеряна: история хранит обе.
-  const history = await prices.history(sber.id, new Date('2026-01-01'))
-  expect(history.length).toBeGreaterThanOrEqual(2)
+  expect(await pricePoints(sber.id)).toBeGreaterThanOrEqual(2)
 })

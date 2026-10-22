@@ -5,7 +5,9 @@ import { LoggerModule } from 'nestjs-pino'
 import { envSchema } from './config/env.ts'
 import { QuietLogger } from './config/quiet-logger.ts'
 import type { Env } from './config/env.ts'
+import { DbModule } from './db/db.module.ts'
 import { HealthServer } from './health/health.server.ts'
+import { PricesSchedulerModule } from './prices/prices-scheduler.module.ts'
 
 const ENV_FILE = '.env'
 
@@ -41,6 +43,8 @@ const ENV_FILE = '.env'
         }
       },
     }),
+    DbModule,
+    PricesSchedulerModule,
   ],
   providers: [QuietLogger, HealthServer],
 })

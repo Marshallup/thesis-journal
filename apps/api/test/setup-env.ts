@@ -8,3 +8,6 @@ process.env.JWT_REFRESH_SECRET ??= 'r'.repeat(32)
 process.env.DATABASE_URL ??= 'postgresql://placeholder:placeholder@127.0.0.1:1/placeholder'
 // То же для роли приложения: настоящий адрес ставит тест из db.appUrl.
 process.env.APP_DATABASE_URL ??= 'postgresql://placeholder:placeholder@127.0.0.1:1/placeholder'
+// И для роли воркера: его тесты лежат в apps/ingestor, а файл подготовки один
+// на весь прогон.
+process.env.INGESTOR_DATABASE_URL ??= 'postgresql://placeholder:placeholder@127.0.0.1:1/placeholder'
