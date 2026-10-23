@@ -109,6 +109,9 @@ export function TradesPage() {
           <Link to="/imports" className="text-accent">
             Импорт отчёта
           </Link>
+          <Link to="/exchange" className="text-accent">
+            Биржа
+          </Link>
           <Link to="/decisions" className="text-accent">
             Решения
           </Link>

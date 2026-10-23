@@ -211,3 +211,49 @@ it('выключенный флаг отказывает до записи и д
   expect(await db.prisma.apiKey.count({ where: { accountId } })).toBe(0)
   expect(sent).toHaveLength(0)
 })
+
+// Экрану нужно состояние ключа: маска, статус проверки и причина отказа.
+// Секрета в ответе нет — его нет и в таблице.
+it('состояние ключа отдаётся с маской, статусом и причиной', async () => {
+  const { userId, accountId } = await seedAccount()
+  await keys.save(userId, accountId, {
+    exchange: 'bybit',
+    apiKey: 'bybitPublicPartFFFF',
+    apiSecret: 'секрет-для-состояния',
+  })
+
+  const fresh = await keys.view(userId, accountId)
+  expect(fresh).toMatchObject({ enabled: true, key: { mask: 'bybi…FFFF', status: 'unverified' } })
+  expect(JSON.stringify(fresh)).not.toContain('секрет-для-состояния')
+
+  // Воркер проверил права и отказал: причина должна дойти до экрана.
+  await db.prisma.apiKey.updateMany({
+    where: { accountId },
+    data: { status: 'rejected', error: 'ключ умеет торговать', verifiedAt: new Date() },
+  })
+
+  const checked = await keys.view(userId, accountId)
+  expect(checked.key).toMatchObject({ status: 'rejected', error: 'ключ умеет торговать' })
+  expect(checked.key?.verifiedAt).toBeTruthy()
+})
+
+it('без ключа состояние пустое, а фича включена', async () => {
+  const { userId, accountId } = await seedAccount()
+
+  expect(await keys.view(userId, accountId)).toEqual({ enabled: true, key: null })
+})
+
+// Выключенную фичу экран должен объяснять, а не показывать форму, которая
+// получит отказ на отправке.
+it('выключенная фича видна в состоянии', async () => {
+  const { userId, accountId } = await seedAccount()
+
+  expect(await serviceWith(false).view(userId, accountId)).toMatchObject({ enabled: false })
+})
+
+it('состояние ключа чужого счёта не отдаётся', async () => {
+  const mine = await seedAccount()
+  const theirs = await seedAccount()
+
+  await expect(keys.view(mine.userId, theirs.accountId)).rejects.toThrow()
+})

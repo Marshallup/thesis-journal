@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router'
 import { AccountForm } from './pages/accounts/new/account-form.tsx'
 import { DecisionForm } from './pages/decision-new/decision-form.tsx'
 import { DecisionsPage } from './pages/decisions/decisions-page.tsx'
+import { ExchangePage } from './pages/exchange/exchange-page.tsx'
 import { ImportPage } from './pages/imports/import-page.tsx'
 import { InstrumentPage } from './pages/instruments/instrument-page.tsx'
 import { LoginPage } from './pages/login/login-page.tsx'
@@ -49,6 +50,10 @@ export function App() {
       <Route
         path="/portfolio"
         element={state === 'authenticated' ? <PortfolioPage /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/exchange"
+        element={state === 'authenticated' ? <ExchangePage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/imports"

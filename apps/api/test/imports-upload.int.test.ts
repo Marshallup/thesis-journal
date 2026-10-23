@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { Test } from '@nestjs/testing'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { AccountsModule } from '../src/accounts/accounts.module.ts'
@@ -155,4 +155,29 @@ it('повторный разбор отправляет команду без �
   expect(sent).toHaveLength(1)
   expect(sent[0]?.payloadBase64).toBeUndefined()
   expect(sent[0]?.importId).toBe(importId)
+})
+
+// Экран синхронизации узнаёт, чем кончилась команда, только по импортам,
+// которые она создала: ответ на команду приходит раньше результата.
+it('список импортов отдаёт свои, новые первыми', async () => {
+  const { userId, accountId } = await seedAccount(`list-${randomUUID()}@example.com`)
+  await service.upload(userId, accountId, Buffer.from('первый отчёт'), 'a.xlsx')
+  await service.upload(userId, accountId, Buffer.from('второй отчёт'), 'b.xlsx')
+
+  const rows = await service.recent(userId, accountId)
+
+  expect(rows).toHaveLength(2)
+  expect(Date.parse(rows[0]!.createdAt)).toBeGreaterThanOrEqual(Date.parse(rows[1]!.createdAt))
+  expect(rows.every((row) => row.source === 'sber')).toBe(true)
+})
+
+// Фильтр по счёту — сужение внутри своих, а RLS закрывает чужие независимо от
+// него: подставленный чужой счёт не отдаёт ничего.
+it('импорты чужого счёта в список не попадают', async () => {
+  const mine = await seedAccount(`mine-list-${randomUUID()}@example.com`)
+  const theirs = await seedAccount(`theirs-list-${randomUUID()}@example.com`)
+  await service.upload(theirs.userId, theirs.accountId, Buffer.from('чужой отчёт'), 'c.xlsx')
+
+  expect(await service.recent(mine.userId, theirs.accountId)).toEqual([])
+  expect(await service.recent(mine.userId)).toEqual([])
 })

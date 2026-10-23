@@ -16,6 +16,14 @@ export type ImportStatus = {
   createdAt: string
 }
 
+// Строка списка: к статусу добавлен источник — на экране биржи и отчёта
+// соседствуют импорты из файла и из синхронизации, и различать их надо.
+export type ImportRow = ImportStatus & { source: string }
+
+// Двадцать строк: синхронизация за два года создаёт импорт на каждое окно с
+// сделками, и показывать их все на экране незачем — нужны последние.
+const LIST_LIMIT = 20
+
 // Источник берётся от счёта: отчёт, залитый в счёт Сбера, — отчёт Сбера.
 // У ручного счёта брокера нет, поэтому остаётся обобщённый csv.
 function sourceOf(provider: string): string {
@@ -116,6 +124,30 @@ export class ImportsService {
   }
 
   // Статус для экрана: разбор асинхронный, и человеку надо видеть, на чём он.
+  // Последние импорты счёта. Нужны экрану синхронизации: команда асинхронная,
+  // и единственный способ узнать, чем она кончилась, — посмотреть импорты,
+  // которые она создала.
+  async recent(userId: string, accountId?: string): Promise<ImportRow[]> {
+    const rows = await this.prisma.withUser(userId, (tx) =>
+      tx.import.findMany({
+        // RLS уже ограничивает выборку своими счетами; фильтр по счёту —
+        // сужение внутри них, а не защита.
+        where: accountId ? { accountId } : {},
+        orderBy: { createdAt: 'desc' },
+        take: LIST_LIMIT,
+      }),
+    )
+
+    return rows.map((row) => ({
+      id: row.id,
+      source: row.source,
+      status: row.status,
+      error: row.error,
+      result: (row.result as ImportResultSummary | null) ?? null,
+      createdAt: row.createdAt.toISOString(),
+    }))
+  }
+
   async status(userId: string, importId: string): Promise<ImportStatus> {
     const row = await this.prisma.withUser(userId, (tx) =>
       tx.import.findUniqueOrThrow({ where: { id: importId } }),

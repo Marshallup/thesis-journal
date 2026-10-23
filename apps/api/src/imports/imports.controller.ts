@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   Res,
   UploadedFile,
   UseGuards,
@@ -20,7 +21,7 @@ import { CurrentUser } from '../auth/current-user.decorator.ts'
 import type { AuthenticatedUser } from '../auth/current-user.decorator.ts'
 import { ApplyImportService } from './apply-import.service.ts'
 import { ImportsService } from './imports.service.ts'
-import type { ImportStatus, UploadResult } from './imports.service.ts'
+import type { ImportRow, ImportStatus, UploadResult } from './imports.service.ts'
 
 // Десять мегабайт: брокерский отчёт за год укладывается с запасом, а без
 // границы загрузка становится способом занять диск.
@@ -55,6 +56,17 @@ export class ImportsController {
     // следит за статусом. Притворяться, что ответ окончательный, нельзя.
     response.status(result.status === 'duplicate' ? 200 : 201)
     return result
+  }
+
+  // Список, а не только статус по одному: синхронизация с биржей создаёт
+  // импорты сама, и экран должен показать, что приехало.
+  @Get()
+  @ApiOperation({ summary: 'Последние импорты, при желании — по одному счёту' })
+  recent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('accountId', { schema: z.uuid().optional() }) accountId?: string,
+  ): Promise<ImportRow[]> {
+    return this.imports.recent(user.userId, accountId)
   }
 
   // Отдельный список, а не часть ответа на применение: про отложенное надо

@@ -9,6 +9,20 @@ import { RabbitPublisher } from '../rabbit/rabbit.publisher.ts'
 import type { Env } from '../config/env.ts'
 
 export type SaveKey = { exchange: 'bybit'; apiKey: string; apiSecret: string }
+
+// Состояние ключа для экрана. Секрета здесь нет и быть не может: в `api_keys`
+// его тоже нет — только маска.
+export type KeyState = {
+  exchange: string
+  mask: string
+  status: string
+  error: string | null
+  verifiedAt: string | null
+}
+
+// Флаг едет вместе с ключом: экран должен объяснять, почему формы нет, а не
+// показывать её и получать 403 на отправке.
+export type KeysView = { enabled: boolean; key: KeyState | null }
 export type SavedKey = { id: string; mask: string; status: 'unverified' }
 
 // Первые четыре знака и последние четыре. Этого хватает, чтобы узнать свой
@@ -39,6 +53,27 @@ export class KeysService {
       throw new Error('EXCHANGE_KEYS_ENABLED включён, а MASTER_KEY_FILE нет: шифровать нечем')
     }
     this.masterKey = parseMasterKey(readFileSync(path, 'utf8'))
+  }
+
+  async view(userId: string, accountId: string): Promise<KeysView> {
+    const key = await this.prisma.withUser(userId, async (tx) => {
+      // Явный фильтр по userId, RLS под ним — и это же проверка владения счётом.
+      await tx.account.findFirstOrThrow({ where: { id: accountId, userId } })
+      return tx.apiKey.findFirst({ where: { accountId } })
+    })
+
+    return {
+      enabled: this.masterKey !== null,
+      key: key
+        ? {
+            exchange: key.exchange,
+            mask: key.keyMask,
+            status: key.status,
+            error: key.error,
+            verifiedAt: key.verifiedAt?.toISOString() ?? null,
+          }
+        : null,
+    }
   }
 
   // Ключ принимается, но пока не используется: права проверит коннектор при
