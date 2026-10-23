@@ -55,9 +55,7 @@ export function parseMasterKey(text: string): Buffer {
   // ломается переносом строки или кодировкой.
   const key = Buffer.from(text.trim(), 'hex')
   if (key.length !== MASTER_KEY_BYTES) {
-    throw new Error(
-      `мастер-ключ: нужно ${MASTER_KEY_BYTES} байт в hex, получено ${key.length}`,
-    )
+    throw new Error(`мастер-ключ: нужно ${MASTER_KEY_BYTES} байт в hex, получено ${key.length}`)
   }
   return key
 }

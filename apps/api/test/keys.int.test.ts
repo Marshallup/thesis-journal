@@ -188,9 +188,13 @@ it('пользователь вне списка получает отказ, и
 // Выключенная фича не требует мастер-ключа и не притворяется работающей.
 it('с пустым списком фича выключена целиком', async () => {
   const { userId, accountId } = await seedAccount(`off-${randomUUID()}@example.com`)
-  const disabled = new KeysService(prisma, publisher as RabbitPublisher, {
-    get: () => '',
-  } as unknown as ConfigService<Env, true>)
+  const disabled = new KeysService(
+    prisma,
+    publisher as RabbitPublisher,
+    {
+      get: () => '',
+    } as unknown as ConfigService<Env, true>,
+  )
 
   await expect(
     disabled.save(userId, accountId, {
