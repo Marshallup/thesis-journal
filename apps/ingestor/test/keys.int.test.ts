@@ -3,13 +3,16 @@ import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '@nestjs/config'
+import { KEYS_TOPIC } from '@thesis/contracts'
 import { MASTER_KEY_BYTES, seal, unseal } from '@thesis/contracts/crypto'
-import { afterAll, beforeAll, expect, it } from 'vitest'
-import { PrismaService } from '../src/db/prisma.service.ts'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { KeysService } from '../src/keys/keys.service.ts'
+import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
+import { PrismaService } from '../src/db/prisma.service.ts'
+import { invalidKey, readOnlyKey, tradingKey } from './fixtures/bybit-api-key.ts'
 import type { Env } from '../src/config/env.ts'
-import type { ExchangeKeySave } from '@thesis/contracts'
+import type { ExchangeKeyChecked, ExchangeKeySave } from '@thesis/contracts'
 import type { RabbitConsumer } from '../src/rabbit/rabbit.consumer.ts'
 import { withTestDb } from './setup-db.ts'
 
@@ -19,25 +22,50 @@ let keys: KeysService
 
 const masterKey = randomBytes(MASTER_KEY_BYTES)
 const keyFile = join(tmpdir(), `thesis-worker-master-${randomUUID()}.key`)
+const realFetch = globalThis.fetch
 
 // Консьюмер подменён: брокера в тестах нет, а проверяется обработчик — то, что
-// он пишет и чем отказывает.
+// он пишет, что публикует и чем отказывает.
 const consumer = { on: () => {} } as unknown as RabbitConsumer
 
 function configWith(path: string | undefined): ConfigService<Env, true> {
   return { get: () => path } as unknown as ConfigService<Env, true>
 }
 
+function serviceWith(path: string | undefined): KeysService {
+  return new KeysService(prisma, new OutboxRepository(prisma), consumer, configWith(path))
+}
+
+// К бирже из тестов не ходим: правило проекта. Отвечаем записанной формой
+// ответа и запоминаем, сколько раз спросили.
+function answerWith(body: unknown): { calls: number } {
+  const counter = { calls: 0 }
+  globalThis.fetch = vi.fn(async () => {
+    counter.calls += 1
+    return new Response(JSON.stringify(body), { status: 200 })
+  }) as unknown as typeof fetch
+  return counter
+}
+
 function command(secret: string, accountId: string): ExchangeKeySave {
   const box = seal(secret, masterKey)
   return {
     accountId,
+    userId: randomUUID(),
     exchange: 'bybit',
-    apiKeyPublic: 'bybitPublicPart',
+    apiKeyPublic: 'bybitPublicPart7f3a',
     ciphertextBase64: box.ciphertext.toString('base64'),
     nonceBase64: box.nonce.toString('base64'),
     tagBase64: box.tag.toString('base64'),
   }
+}
+
+async function published(): Promise<ExchangeKeyChecked[]> {
+  const events = await prisma.outboxEvent.findMany({
+    where: { topic: KEYS_TOPIC },
+    orderBy: { id: 'asc' },
+  })
+  return events.map((event) => event.payload as unknown as ExchangeKeyChecked)
 }
 
 beforeAll(async () => {
@@ -46,7 +74,15 @@ beforeAll(async () => {
   writeFileSync(keyFile, masterKey.toString('hex'), { mode: 0o600 })
   prisma = new PrismaService()
   await prisma.$connect()
-  keys = new KeysService(prisma, consumer, configWith(keyFile))
+  keys = serviceWith(keyFile)
+})
+
+beforeEach(async () => {
+  await prisma.outboxEvent.deleteMany()
+})
+
+afterEach(() => {
+  globalThis.fetch = realFetch
 })
 
 afterAll(async () => {
@@ -55,22 +91,40 @@ afterAll(async () => {
 })
 
 // Шифротекст доезжает целым: воркер расшифровывает его тем же мастер-ключом,
-// которым зашифровал api. Это и есть проверка, что по брокеру едет не мусор.
-it('ключ сохраняется шифротекстом и расшифровывается обратно', async () => {
+// которым зашифровал api, и только поэтому может подписать запрос к бирже.
+it('ключ только на чтение сохраняется и расшифровывается обратно', async () => {
   const accountId = randomUUID()
+  answerWith(readOnlyKey)
+
   await keys.save(command('секрет-биржи', accountId))
 
   const stored = await prisma.exchangeKey.findUniqueOrThrow({
     where: { exchange_key_per_account: { accountId, exchange: 'bybit' } },
   })
   expect(unseal(stored, masterKey)).toBe('секрет-биржи')
-  expect(stored.apiKeyPublic).toBe('bybitPublicPart')
+  expect(await published()).toMatchObject([{ accountId, status: 'active' }])
+})
+
+// Обещание README проверяется кодом: ключ с правом торговать не просто
+// помечается отказом, он **не попадает на диск вовсе**.
+it('ключ с правом торговать не сохраняется, а отклоняется с причиной', async () => {
+  const accountId = randomUUID()
+  answerWith(tradingKey)
+
+  await keys.save(command('секрет-биржи', accountId))
+
+  expect(await prisma.exchangeKey.count({ where: { accountId } })).toBe(0)
+  const [event] = await published()
+  expect(event?.status).toBe('rejected')
+  expect(event?.reason).toContain('Read-only')
+  expect(event?.scopes).toContain('Spot:SpotTrade')
 })
 
 // Повторная команда — замена ключа, а не второй ключ: на бирже у счёта один
 // действующий ключ, и в базе должно быть так же.
 it('повторная команда обновляет ключ, а не добавляет второй', async () => {
   const accountId = randomUUID()
+  answerWith(readOnlyKey)
   await keys.save(command('первый', accountId))
   await keys.save(command('второй', accountId))
 
@@ -79,17 +133,21 @@ it('повторная команда обновляет ключ, а не до�
   expect(unseal(rows[0]!, masterKey)).toBe('второй')
 })
 
-// Подменённый тег означает подменённое сообщение. Повторять такое бессмысленно:
-// отказ навсегда, в отстойник, и ничего не записано.
-it('подменённый шифротекст отбивается и в базу не попадает', async () => {
+// Подменённый шифротекст означает подменённое сообщение. На биржу с таким
+// ключом не ходим вовсе: сначала целостность, потом сеть.
+it('подменённый шифротекст отбивается до запроса к бирже', async () => {
   const accountId = randomUUID()
   const tampered = command('секрет', accountId)
   const bytes = Buffer.from(tampered.ciphertextBase64, 'base64')
   bytes[0] = (bytes[0] ?? 0) ^ 0xff
   tampered.ciphertextBase64 = bytes.toString('base64')
+  const counter = answerWith(readOnlyKey)
 
   await expect(keys.save(tampered)).rejects.toThrow(PermanentFailure)
+
+  expect(counter.calls).toBe(0)
   expect(await prisma.exchangeKey.count({ where: { accountId } })).toBe(0)
+  expect(await published()).toEqual([])
 })
 
 // Мастер-ключ у api и воркера должен быть одним файлом. Если воркер читает
@@ -97,19 +155,36 @@ it('подменённый шифротекст отбивается и в ба�
 it('чужой мастер-ключ у воркера — отказ навсегда', async () => {
   const other = join(tmpdir(), `thesis-worker-other-${randomUUID()}.key`)
   writeFileSync(other, randomBytes(MASTER_KEY_BYTES).toString('hex'), { mode: 0o600 })
-  const stranger = new KeysService(prisma, consumer, configWith(other))
-
   const accountId = randomUUID()
-  await expect(stranger.save(command('секрет', accountId))).rejects.toThrow(PermanentFailure)
+  answerWith(readOnlyKey)
+
+  await expect(serviceWith(other).save(command('секрет', accountId))).rejects.toThrow(
+    PermanentFailure,
+  )
   expect(await prisma.exchangeKey.count({ where: { accountId } })).toBe(0)
 })
 
-// Команда пришла, а файла с ключом нет: это ошибка настройки, и три попытки
-// её не исправят.
+// Команда пришла, а файла с ключом нет: это ошибка настройки, и три попытки её
+// не исправят.
 it('без MASTER_KEY_FILE команда отбивается с внятной причиной', async () => {
-  const unconfigured = new KeysService(prisma, consumer, configWith(undefined))
+  answerWith(readOnlyKey)
 
-  await expect(unconfigured.save(command('секрет', randomUUID()))).rejects.toThrow(
+  await expect(serviceWith(undefined).save(command('секрет', randomUUID()))).rejects.toThrow(
     /MASTER_KEY_FILE/,
   )
+})
+
+// Отказ биржи — не отказ навсегда: неверный ключ бывает и следствием того, что
+// биржа ещё не раскатала его по своим узлам. Такое уходит в повтор, а не в
+// отстойник, и ничего не записывает.
+it('отказ биржи оставляет ключ незаписанным и уходит в повтор', async () => {
+  const accountId = randomUUID()
+  answerWith(invalidKey)
+
+  const failure = keys.save(command('секрет', accountId))
+  await expect(failure).rejects.toThrow(/10003/)
+  await expect(failure).rejects.not.toBeInstanceOf(PermanentFailure)
+
+  expect(await prisma.exchangeKey.count({ where: { accountId } })).toBe(0)
+  expect(await published()).toEqual([])
 })

@@ -15,6 +15,7 @@ import { HealthModule } from './health/health.module.ts'
 import { ImportsConsumerModule } from './imports/imports-consumer.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
 import { InstrumentsModule } from './instruments/instruments.module.ts'
+import { KeysConsumerModule } from './keys/keys-consumer.module.ts'
 import { KeysModule } from './keys/keys.module.ts'
 import { PortfolioModule } from './portfolio/portfolio.module.ts'
 import { PricesConsumerModule } from './prices/prices-consumer.module.ts'
@@ -86,6 +87,7 @@ import { TradesModule } from './trades/trades.module.ts'
     ImportsModule,
     ImportsConsumerModule,
     KeysModule,
+    KeysConsumerModule,
     PortfolioModule,
     PricesModule,
     PricesConsumerModule,

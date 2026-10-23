@@ -67,6 +67,10 @@ export const EXCHANGE_KEY_SAVE_QUEUE = 'exchange-key.save'
 
 export type ExchangeKeySave = {
   accountId: string
+  // Владелец данных. Едет сквозь всю цепочку потому, что статус проверки
+  // придётся писать под RLS, а у консьюмера нет сессии и спросить пользователя
+  // неоткуда. Та же причина, что у ImportParse.
+  userId: string
   exchange: 'bybit'
   // Публичная часть ключа секретом не является: по ней биржа опознаёт запрос,
   // а человек — свой ключ в списке.
@@ -74,4 +78,23 @@ export type ExchangeKeySave = {
   ciphertextBase64: string
   nonceBase64: string
   tagBase64: string
+}
+
+// Факт «ключ проверен»: воркер спросил у биржи права ключа и решил, годится ли
+// он. Событие, а не ответ на команду: о результате api узнаёт тем же путём,
+// что и обо всём остальном, — через Kafka и с дедупликацией.
+export const KEYS_TOPIC = 'thesis.keys.v1'
+
+export type ExchangeKeyChecked = {
+  accountId: string
+  userId: string
+  exchange: 'bybit'
+  // active — ключ только на чтение и сохранён у воркера; rejected — у ключа
+  // есть лишние права, и он не сохранён вовсе.
+  status: 'active' | 'rejected'
+  // Права, как их назвала биржа: человеку надо видеть, что именно оказалось
+  // лишним, а не только «отказано».
+  scopes: string[]
+  reason?: string
+  checkedAt: string
 }
