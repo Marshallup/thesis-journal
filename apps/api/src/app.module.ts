@@ -20,6 +20,7 @@ import { KeysModule } from './keys/keys.module.ts'
 import { PortfolioModule } from './portfolio/portfolio.module.ts'
 import { PricesConsumerModule } from './prices/prices-consumer.module.ts'
 import { PricesModule } from './prices/prices.module.ts'
+import { SyncModule } from './sync/sync.module.ts'
 import { TradesModule } from './trades/trades.module.ts'
 
 @Module({
@@ -91,6 +92,7 @@ import { TradesModule } from './trades/trades.module.ts'
     PortfolioModule,
     PricesModule,
     PricesConsumerModule,
+    SyncModule,
   ],
   // Через APP_PIPE, а не useGlobalPipes: иначе валидации не будет в тестах,
   // где приложение собирается через Test.createTestingModule.
