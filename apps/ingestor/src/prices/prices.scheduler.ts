@@ -9,17 +9,14 @@ const REFRESH_MS = 5 * 60 * 1000
 // ISS лимита не публикует, но на частых обращениях отвечает 429. Своя нижняя
 // граница на случай, если кто-то дёрнет обновление руками.
 const MIN_INTERVAL_MS = 60 * 1000
-// Размыкатель: после серии отказов перестаём ходить, пока не остынет. Без него
-// упавший ISS получает запрос каждые пять минут вечно.
-const FAILURES_TO_OPEN = 3
-const COOLDOWN_MS = 15 * 60 * 1000
+
+// Размыкателя здесь больше нет: он общий и живёт в Redis (задача 23). Два
+// размыкателя на одного провайдера хуже одного — непонятно, который сработал.
 
 @Injectable()
 export class PricesScheduler implements OnApplicationBootstrap {
   private readonly log = new Logger(PricesScheduler.name)
   private lastRun = 0
-  private failures = 0
-  private openedAt = 0
 
   constructor(
     private readonly prices: PricesService,
@@ -40,12 +37,10 @@ export class PricesScheduler implements OnApplicationBootstrap {
 
     const now = Date.now()
     if (now - this.lastRun < MIN_INTERVAL_MS) return
-    if (this.failures >= FAILURES_TO_OPEN && now - this.openedAt < COOLDOWN_MS) return
 
     this.lastRun = now
     try {
       const { saved, seen } = await this.prices.refresh()
-      this.failures = 0
       if (saved > 0) this.log.log(`котировки: сохранено ${saved} из ${seen} строк доски`)
 
       // После живых котировок, а не до: история нужна один раз, а свежая цена
@@ -55,9 +50,9 @@ export class PricesScheduler implements OnApplicationBootstrap {
         this.log.log(`история: ${history.saved} дневных цен по ${history.filled} бумагам`)
       }
     } catch (error) {
-      this.failures += 1
-      if (this.failures === FAILURES_TO_OPEN) this.openedAt = now
-      this.log.warn(`котировки не обновились (${this.failures}): ${String(error)}`)
+      // Отказы считает размыкатель; здесь остаётся сказать об этом вслух —
+      // молчащий цикл опроса выглядит как работающий.
+      this.log.warn(`котировки не обновились: ${String(error)}`)
     }
   }
 }

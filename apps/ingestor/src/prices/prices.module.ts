@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { DbModule } from '../db/db.module.ts'
+import { OutboundModule } from '../outbound/outbound.module.ts'
 import { OutboxModule } from '../outbox/outbox.module.ts'
 import { MoexClient } from './moex.client.ts'
 import { PricesService } from './prices.service.ts'
@@ -8,7 +9,7 @@ import { PricesService } from './prices.service.ts'
 // из api: интеграционный тест поднимает этот модуль и физически не может уйти
 // в живой ISS, потому что в нём некому дёрнуть опрос.
 @Module({
-  imports: [DbModule, OutboxModule],
+  imports: [DbModule, OutboundModule, OutboxModule],
   providers: [MoexClient, PricesService],
   exports: [PricesService],
 })

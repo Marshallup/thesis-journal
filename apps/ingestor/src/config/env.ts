@@ -10,6 +10,9 @@ export const envSchema = z.object({
   // адрес и не URL — `localhost:9092`.
   KAFKA_BROKERS: z.string().min(1),
   RABBITMQ_URL: z.url(),
+  // Общий ограничитель и размыкатель: состояние в Redis, а не в памяти
+  // процесса. Без него внешние вызовы идут мимо правила проекта.
+  REDIS_URL: z.url(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
   // Тот же файл мастер-ключа, что у api: шифрует api, расшифровывает воркер.

@@ -1,23 +1,15 @@
-import { Test } from '@nestjs/testing'
 import { Money } from '@thesis/contracts'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
-import { DbModule } from '../src/db/db.module.ts'
-import { PricesModule } from '../src/prices/prices.module.ts'
 import { PricesService } from '../src/prices/prices.service.ts'
+import { createPricesModule } from './setup-prices-module.ts'
 import { moexResponse, moexResponseLater } from './fixtures/moex-marketdata.ts'
 import { withTestDb } from './setup-db.ts'
 
 let db: Awaited<ReturnType<typeof withTestDb>>
-let moduleRef: Awaited<ReturnType<typeof createModule>>
+let moduleRef: Awaited<ReturnType<typeof createPricesModule>>
 let prices: PricesService
 
 const realFetch = globalThis.fetch
-
-async function createModule() {
-  const ref = await Test.createTestingModule({ imports: [DbModule, PricesModule] }).compile()
-  await ref.init()
-  return ref
-}
 
 function answerWith(body: unknown) {
   globalThis.fetch = vi.fn(
@@ -28,7 +20,7 @@ function answerWith(body: unknown) {
 beforeAll(async () => {
   db = await withTestDb()
   process.env.INGESTOR_DATABASE_URL = db.url
-  moduleRef = await createModule()
+  moduleRef = await createPricesModule()
   prices = moduleRef.get(PricesService)
 })
 

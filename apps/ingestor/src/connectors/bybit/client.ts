@@ -1,5 +1,6 @@
 import { signedHeaders } from './signature.ts'
 import type { Credentials } from './signature.ts'
+import type { ExternalCall } from '../../outbound/external-call.ts'
 
 const BASE = 'https://api.bybit.com'
 
@@ -17,21 +18,28 @@ export type ApiKeyInfo = {
   permissions: Record<string, string[]>
 }
 
-// Ограничителя и размыкателя здесь ещё нет: они появятся в задаче 23, на
-// Redis, общие для MOEX и биржи. Запись в docs/unknowns.md — «Ограничитель и
-// размыкатель котировок живут в памяти процесса».
+// Каждый запрос идёт через общий ограничитель и размыкатель: правило проекта,
+// и у биржи оно тем важнее, чем MOEX — лимиты у Bybit считаются на ключ и на
+// адрес, а отказ по лимиту выглядит как отказ по правам.
 export class BybitClient {
-  constructor(private readonly credentials: Credentials) {}
+  constructor(
+    private readonly credentials: Credentials,
+    private readonly calls: ExternalCall,
+  ) {}
 
   queryApiKey(): Promise<ApiKeyInfo> {
     return this.get<ApiKeyInfo>('/v5/user/query-api')
   }
 
   private async get<T>(path: string, query = ''): Promise<T> {
-    const timestamp = String(Date.now())
-    const response = await fetch(`${BASE}${path}${query ? `?${query}` : ''}`, {
-      headers: signedHeaders({ ...this.credentials, timestamp, query }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+    const response = await this.calls.run('bybit', () => {
+      // Время берётся перед самой отправкой: подпись живёт recvWindow
+      // миллисекунд, и ожидание в очереди ограничителя может её просрочить.
+      const timestamp = String(Date.now())
+      return fetch(`${BASE}${path}${query ? `?${query}` : ''}`, {
+        headers: signedHeaders({ ...this.credentials, timestamp, query }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
     })
     if (!response.ok) throw new Error(`Bybit ${path} ответил ${response.status}`)
 

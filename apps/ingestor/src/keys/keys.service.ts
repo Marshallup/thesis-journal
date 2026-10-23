@@ -6,6 +6,7 @@ import { EXCHANGE_KEY_SAVE_QUEUE, KEYS_TOPIC } from '@thesis/contracts'
 import { parseMasterKey, unseal } from '@thesis/contracts/crypto'
 import type { ExchangeKeyChecked, ExchangeKeySave } from '@thesis/contracts'
 import { BybitClient } from '../connectors/bybit/client.ts'
+import { ExternalCall } from '../outbound/external-call.ts'
 import { verdict } from '../connectors/bybit/api-key.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { PrismaService } from '../db/prisma.service.ts'
@@ -20,6 +21,7 @@ export class KeysService implements OnApplicationBootstrap {
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxRepository,
+    private readonly calls: ExternalCall,
     private readonly rabbit: RabbitConsumer,
     private readonly config: ConfigService<Env, true>,
   ) {}
@@ -34,7 +36,8 @@ export class KeysService implements OnApplicationBootstrap {
     // Права спрашиваем **до** записи: ключ, которому мы откажем, не должен
     // попасть на диск вовсе. Иначе отклонённый секрет полежал бы в базе
     // столько, сколько заняла проверка, — и остался бы в бэкапе.
-    const info = await new BybitClient({ apiKey: command.apiKeyPublic, secret }).queryApiKey()
+    const client = new BybitClient({ apiKey: command.apiKeyPublic, secret }, this.calls)
+    const info = await client.queryApiKey()
     const check = verdict(info)
 
     const event: ExchangeKeyChecked = {
