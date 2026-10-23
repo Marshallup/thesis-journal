@@ -1,11 +1,11 @@
-import { Body, Controller, HttpCode, Param, Post, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common'
 import { AuthGuard } from '@nestjs/passport'
 import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
 import { z } from 'zod'
 import { CurrentUser } from '../auth/current-user.decorator.ts'
 import type { AuthenticatedUser } from '../auth/current-user.decorator.ts'
 import { KeysService } from './keys.service.ts'
-import type { SavedKey } from './keys.service.ts'
+import type { KeysView, SavedKey } from './keys.service.ts'
 
 // Границы длины — не придирка: ключ Bybit короче сорока знаков не бывает, а
 // поле без потолка превращается в способ положить в базу мегабайт.
@@ -20,6 +20,15 @@ const saveKeySchema = z.object({
 @ApiBearerAuth()
 export class KeysController {
   constructor(private readonly keys: KeysService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Состояние ключа: маска, статус проверки и причина отказа' })
+  view(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('accountId', { schema: z.uuid() }) accountId: string,
+  ): Promise<KeysView> {
+    return this.keys.view(user.userId, accountId)
+  }
 
   @Post()
   // 202, а не 201: ключ станет рабочим, когда его запишет воркер. Притворяться,
