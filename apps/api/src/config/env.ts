@@ -15,6 +15,12 @@ export const envSchema = z.object({
   // Необязательный: по умолчанию выводится из NODE_ENV. Нужен, чтобы вернуть
   // стартовую простыню Nest, понижённую QuietLogger до debug.
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
+  // Приём биржевых ключей: список почт через запятую. Пусто — фича выключена,
+  // и мастер-ключ не нужен вовсе.
+  EXCHANGE_KEYS_ALLOWLIST: z.string().default(''),
+  // Путь к файлу с мастер-ключом (32 байта в hex). Необязательный, потому что
+  // нужен только при включённой фиче — и тогда отсутствие валит старт.
+  MASTER_KEY_FILE: z.string().optional(),
   PORT: z.coerce.number().default(3000),
 })
 

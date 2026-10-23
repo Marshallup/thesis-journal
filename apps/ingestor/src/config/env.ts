@@ -12,6 +12,9 @@ export const envSchema = z.object({
   RABBITMQ_URL: z.url(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).optional(),
+  // Тот же файл мастер-ключа, что у api: шифрует api, расшифровывает воркер.
+  // Необязательный — без биржевых ключей воркер работает как раньше.
+  MASTER_KEY_FILE: z.string().optional(),
   // Свой порт: HTTP у воркера только под пробу, и занимать 3000 ему незачем.
   INGESTOR_PORT: z.coerce.number().default(3001),
 })

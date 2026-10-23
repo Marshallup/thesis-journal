@@ -66,9 +66,37 @@ model Account {
   // Два счёта с одним именем у одного человека — это не выбор, а опечатка:
   // имя и заводится ради того, чтобы различать. NULL-ы в индексе различны,
   // поэтому безымянных счетов может быть сколько угодно.
+  apiKeys ApiKey[]
+
   @@unique([userId, name], name: "account_name_unique", map: "account_name_unique")
   @@index([userId])
   @@map("accounts")
+  @@schema("public")
+}
+
+// Ключ от биржи, как его видит человек: маска, биржа и состояние проверки.
+// Секрета здесь нет и быть не может — он лежит в схеме воркера, который
+// единственный ходит на биржу. Отсюда же следствие: этот экран нельзя
+// заставить показать ключ, показывать нечего.
+model ApiKey {
+  id        String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+  // Cascade: маска без счёта не значит ничего. Шифротекст у воркера каскадом
+  // не удалится — он в другой схеме, запись в docs/unknowns.md.
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  exchange String
+  keyMask  String @map("key_mask")
+  // unverified | active | rejected — закрытый список, CHECK в базе. Права
+  // ключа проверяет коннектор при первом подключении: до тех пор ключ
+  // сохранён, но не использован.
+  status      String
+  permissions Json?     @db.JsonB
+  verifiedAt  DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([accountId, exchange], name: "api_key_per_exchange", map: "api_key_per_exchange")
+  @@map("api_keys")
   @@schema("public")
 }
 
@@ -426,5 +454,25 @@ model RawImport {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@map("raw_imports")
+  @@schema("ingestor")
+}
+
+// Шифротекст ключа от биржи. Лежит здесь, потому что на биржу ходит воркер:
+// расшифровать ключ должен тот, кто им пользуется. Без внешнего ключа на
+// accounts — это чужая схема, прав на неё у роли воркера нет.
+model ExchangeKey {
+  id           String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId    String @map("account_id") @db.Uuid
+  exchange     String
+  apiKeyPublic String @map("api_key_public")
+  ciphertext   Bytes
+  nonce        Bytes
+  tag          Bytes
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([accountId, exchange], name: "exchange_key_per_account", map: "exchange_key_per_account")
+  @@map("exchange_keys")
   @@schema("ingestor")
 }

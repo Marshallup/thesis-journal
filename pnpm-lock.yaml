@@ -269,6 +269,10 @@ importers:
       decimal.js:
         specifier: 10.6.0
         version: 10.6.0
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
 
   packages/db:
     dependencies:

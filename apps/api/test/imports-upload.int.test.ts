@@ -7,7 +7,7 @@ import { DbModule } from '../src/db/db.module.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
 import { ImportsService } from '../src/imports/imports.service.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
-import { RabbitPublisher } from '../src/imports/rabbit.publisher.ts'
+import { RabbitPublisher } from '../src/rabbit/rabbit.publisher.ts'
 import type { ImportParse } from '@thesis/contracts'
 import { withTestDb } from './setup-db.ts'
 

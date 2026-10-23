@@ -3,7 +3,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import { IMPORT_PARSE_QUEUE } from '@thesis/contracts'
 import type { ImportParse } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
-import { RabbitPublisher } from './rabbit.publisher.ts'
+import { RabbitPublisher } from '../rabbit/rabbit.publisher.ts'
 
 export type UploadResult = { importId: string; status: 'uploaded' | 'duplicate' }
 export type ImportResultSummary = { created: number; skipped: number; deferred: number }
