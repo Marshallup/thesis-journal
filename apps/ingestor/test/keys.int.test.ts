@@ -7,6 +7,7 @@ import { KEYS_TOPIC } from '@thesis/contracts'
 import { MASTER_KEY_BYTES, seal, unseal } from '@thesis/contracts/crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { KeysService } from '../src/keys/keys.service.ts'
+import type { ExternalCall } from '../src/outbound/external-call.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
@@ -32,8 +33,12 @@ function configWith(path: string | undefined): ConfigService<Env, true> {
   return { get: () => path } as unknown as ConfigService<Env, true>
 }
 
+// Ограничитель и размыкатель здесь ни при чём: они проверяются своими
+// тестами на настоящем Redis, а тут нужен сам обработчик команды.
+const calls = { run: (_provider: string, fn: () => Promise<unknown>) => fn() } as ExternalCall
+
 function serviceWith(path: string | undefined): KeysService {
-  return new KeysService(prisma, new OutboxRepository(prisma), consumer, configWith(path))
+  return new KeysService(prisma, new OutboxRepository(prisma), calls, consumer, configWith(path))
 }
 
 // К бирже из тестов не ходим: правило проекта. Отвечаем записанной формой

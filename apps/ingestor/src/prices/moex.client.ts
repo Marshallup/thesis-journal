@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common'
+import { ExternalCall } from '../outbound/external-call.ts'
 
 // Доска основного режима торгов акциями. У облигаций и фондов свои: тикер без
 // доски неоднозначен.
@@ -53,6 +54,11 @@ function quotedAt(systime: string | number | null): Date | null {
 
 @Injectable()
 export class MoexClient {
+  // Каждый запрос к ISS идёт через общий ограничитель и размыкатель: правило
+  // проекта, и правило не абстрактное — ISS отвечает 429 на частые обращения,
+  // а при второй реплике локальный лимит удваивал бы трафик.
+  constructor(private readonly calls: ExternalCall) {}
+
   // Дневные закрытия: ими заполняется прошлое, которого у пятиминутного
   // опроса нет и быть не может.
   async history(symbol: string, from: Date): Promise<MoexClose[]> {
@@ -68,7 +74,7 @@ export class MoexClient {
         start: String(start),
       })
       const url = `${HISTORY}/${BOARD}/securities/${symbol}.json?${query.toString()}`
-      const response = await fetch(url)
+      const response = await this.calls.run('moex', () => fetch(url))
       if (!response.ok) throw new Error(`MOEX ISS история ответила ${response.status}`)
 
       const body = (await response.json()) as IssHistory
@@ -97,7 +103,9 @@ export class MoexClient {
       'iss.only': 'marketdata',
       'marketdata.columns': COLUMNS.join(','),
     })
-    const response = await fetch(`${BASE}/${BOARD}/securities.json?${query.toString()}`)
+    const response = await this.calls.run('moex', () =>
+      fetch(`${BASE}/${BOARD}/securities.json?${query.toString()}`),
+    )
     if (!response.ok) throw new Error(`MOEX ISS ответил ${response.status}`)
 
     const body = (await response.json()) as IssResponse

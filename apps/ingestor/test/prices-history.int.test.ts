@@ -1,22 +1,14 @@
-import { Test } from '@nestjs/testing'
 import { Money } from '@thesis/contracts'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
-import { DbModule } from '../src/db/db.module.ts'
-import { PricesModule } from '../src/prices/prices.module.ts'
 import { PricesService } from '../src/prices/prices.service.ts'
+import { createPricesModule } from './setup-prices-module.ts'
 import { emptyHistory, historyPage, historyWithGaps } from './fixtures/moex-history.ts'
 import { withTestDb } from './setup-db.ts'
 
 let db: Awaited<ReturnType<typeof withTestDb>>
-let moduleRef: Awaited<ReturnType<typeof createModule>>
+let moduleRef: Awaited<ReturnType<typeof createPricesModule>>
 
 const realFetch = globalThis.fetch
-
-async function createModule() {
-  const ref = await Test.createTestingModule({ imports: [DbModule, PricesModule] }).compile()
-  await ref.init()
-  return ref
-}
 
 // Каждый тест получает свой сервис: множество «уже спрошенных» бумаг живёт в
 // памяти экземпляра, и общий сервис делал бы тесты зависимыми друг от друга.
@@ -47,7 +39,7 @@ async function seedInstrument(symbol: string) {
 beforeAll(async () => {
   db = await withTestDb()
   process.env.INGESTOR_DATABASE_URL = db.url
-  moduleRef = await createModule()
+  moduleRef = await createPricesModule()
 })
 
 afterEach(() => {
