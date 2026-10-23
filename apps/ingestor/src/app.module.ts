@@ -8,6 +8,7 @@ import type { Env } from './config/env.ts'
 import { DbModule } from './db/db.module.ts'
 import { HealthServer } from './health/health.server.ts'
 import { ImportsModule } from './imports/imports.module.ts'
+import { KeysModule } from './keys/keys.module.ts'
 import { OutboxRelayModule } from './outbox/outbox-relay.module.ts'
 import { PricesSchedulerModule } from './prices/prices-scheduler.module.ts'
 
@@ -49,6 +50,7 @@ const ENV_FILE = '.env'
     PricesSchedulerModule,
     OutboxRelayModule,
     ImportsModule,
+    KeysModule,
   ],
   providers: [QuietLogger, HealthServer],
 })

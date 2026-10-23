@@ -5,7 +5,7 @@ import { DbModule } from '../src/db/db.module.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
 import { ApplyImportService } from '../src/imports/apply-import.service.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
-import { RabbitPublisher } from '../src/imports/rabbit.publisher.ts'
+import { RabbitPublisher } from '../src/rabbit/rabbit.publisher.ts'
 import { sberOperations } from './fixtures/sber-operations.ts'
 import { withTestDb } from './setup-db.ts'
 

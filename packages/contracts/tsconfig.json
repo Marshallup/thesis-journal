@@ -1,7 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Типы Node нужны одному модулю — sealed-box: шифрование живёт на
+    // node:crypto. Остальной пакет среды не знает, и наружу крипта уходит
+    // отдельным подпутём `@thesis/contracts/crypto`, чтобы браузерная сборка
+    // её не тянула.
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"]
 }

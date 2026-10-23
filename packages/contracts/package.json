@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/sealed-box.d.ts",
+      "default": "./dist/sealed-box.js"
     }
   },
   "scripts": {
@@ -15,5 +19,8 @@
   },
   "dependencies": {
     "decimal.js": "10.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2"
   }
 }

@@ -59,3 +59,19 @@ export type ImportParsed = {
   operations: RawOperation[]
   error?: string
 }
+
+// Команда «сохрани ключ от биржи». Секрет едет шифротекстом: сообщения
+// RabbitMQ лежат на диске и попадают в дампы, а мастер-ключ — файлом на
+// сервере, и в брокер не попадает никогда.
+export const EXCHANGE_KEY_SAVE_QUEUE = 'exchange-key.save'
+
+export type ExchangeKeySave = {
+  accountId: string
+  exchange: 'bybit'
+  // Публичная часть ключа секретом не является: по ней биржа опознаёт запрос,
+  // а человек — свой ключ в списке.
+  apiKeyPublic: string
+  ciphertextBase64: string
+  nonceBase64: string
+  tagBase64: string
+}
