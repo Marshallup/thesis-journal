@@ -479,3 +479,20 @@ model ExchangeKey {
   @@map("exchange_keys")
   @@schema("ingestor")
 }
+
+// Докуда синхронизирован счёт. Курсор страницы здесь не хранится намеренно:
+// он живёт внутри одного окна, и падение посреди окна означает повтор окна
+// целиком — операции идемпотентны по `execId`, лишнего не случится.
+model SyncCursor {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountId   String   @map("account_id") @db.Uuid
+  // Поток, а не «биржа»: у одной биржи их несколько — сделки, движения денег,
+  // переводы.
+  stream      String
+  syncedUntil DateTime @map("synced_until") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([accountId, stream], name: "sync_cursor_per_stream", map: "sync_cursor_per_stream")
+  @@map("sync_cursors")
+  @@schema("ingestor")
+}

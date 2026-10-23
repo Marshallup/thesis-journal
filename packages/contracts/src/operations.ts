@@ -18,6 +18,8 @@ export type RawOperation = {
   quantity?: string
   price?: string
   fee?: string
+  // Валюта сделки: для `BTCUSDT` это `USDT`. Комиссия приходит уже в ней —
+  // приводит её тот, кто знает правила площадки, то есть коннектор.
   currency: string
   amount?: string
   cashKind?: CashKind

@@ -1,5 +1,6 @@
 import { signedHeaders } from './signature.ts'
 import type { Credentials } from './signature.ts'
+import type { Execution } from './mapper.ts'
 import type { ExternalCall } from '../../outbound/external-call.ts'
 
 const BASE = 'https://api.bybit.com'
@@ -11,6 +12,11 @@ const TIMEOUT_MS = 10_000
 // Ответ Bybit всегда в конверте: HTTP 200 бывает и на отказе, настоящий код —
 // retCode.
 type Envelope<T> = { retCode: number; retMsg: string; result: T }
+
+export type ExecutionPage = {
+  list: Execution[]
+  nextPageCursor: string
+}
 
 export type ApiKeyInfo = {
   // 0 — чтение и запись, 1 — только чтение. Так это описано у биржи.
@@ -29,6 +35,23 @@ export class BybitClient {
 
   queryApiKey(): Promise<ApiKeyInfo> {
     return this.get<ApiKeyInfo>('/v5/user/query-api')
+  }
+
+  // Сто строк — максимум, который отдаёт биржа за один запрос. Дальше курсор.
+  executions(params: {
+    category: 'spot'
+    from: Date
+    to: Date
+    cursor?: string
+  }): Promise<ExecutionPage> {
+    const query = new URLSearchParams({
+      category: params.category,
+      startTime: String(params.from.getTime()),
+      endTime: String(params.to.getTime()),
+      limit: '100',
+      ...(params.cursor ? { cursor: params.cursor } : {}),
+    })
+    return this.get<ExecutionPage>('/v5/execution/list', query.toString())
   }
 
   private async get<T>(path: string, query = ''): Promise<T> {

@@ -7,6 +7,7 @@ import { KEYS_TOPIC } from '@thesis/contracts'
 import { MASTER_KEY_BYTES, seal, unseal } from '@thesis/contracts/crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { KeysService } from '../src/keys/keys.service.ts'
+import { KeyVault } from '../src/keys/vault.ts'
 import type { ExternalCall } from '../src/outbound/external-call.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
@@ -38,7 +39,8 @@ function configWith(path: string | undefined): ConfigService<Env, true> {
 const calls = { run: (_provider: string, fn: () => Promise<unknown>) => fn() } as ExternalCall
 
 function serviceWith(path: string | undefined): KeysService {
-  return new KeysService(prisma, new OutboxRepository(prisma), calls, consumer, configWith(path))
+  const vault = new KeyVault(prisma, configWith(path))
+  return new KeysService(prisma, new OutboxRepository(prisma), vault, calls, consumer)
 }
 
 // К бирже из тестов не ходим: правило проекта. Отвечаем записанной формой

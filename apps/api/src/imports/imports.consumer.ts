@@ -69,7 +69,10 @@ export class ImportsConsumer implements OnApplicationBootstrap, OnApplicationShu
   // применит отчёт второй раз, а если процесс умрёт между отметкой и
   // применением, спасёт идемпотентность самих операций по
   // (account_id, provider, external_id).
-  private async handle(eventId: string, event: ImportParsed): Promise<void> {
+  // Публичный, потому что его зовёт тест: брокер в тестах не поднимается, а
+  // проверять надо именно эту последовательность — отметка, строка импорта,
+  // применение.
+  async handle(eventId: string, event: ImportParsed): Promise<void> {
     const claimed = await this.prisma.$queryRaw<{ id: string }[]>`
       insert into processed_messages (consumer, event_id)
       values (${GROUP}, ${eventId}::uuid)
@@ -78,6 +81,14 @@ export class ImportsConsumer implements OnApplicationBootstrap, OnApplicationShu
     `
     if (claimed.length === 0) {
       this.log.log(`импорт ${event.importId}: событие уже обработано`)
+      return
+    }
+
+    // Строку импорта для синхронизации создаёт консьюмер: `file_hash` известен
+    // только после ответа биржи, и до него создавать её нечему. Для файла
+    // строка уже есть — её завела загрузка.
+    if (event.fileHash && !(await this.ensureImport(event))) {
+      this.log.log(`синхронизация ${event.accountId}: биржа отдала то же, нового нет`)
       return
     }
 
@@ -108,6 +119,26 @@ export class ImportsConsumer implements OnApplicationBootstrap, OnApplicationShu
       }
       this.log.warn(`импорт ${event.importId}: применение отказало — ${String(error)}`)
     }
+  }
+
+  // true — строку создали мы, и операции надо применить. false — строка с таким
+  // хешем уже есть, то есть это та же выборка биржи во второй раз.
+  //
+  // ON CONFLICT, а не «посмотреть и вставить»: две синхронизации одного счёта
+  // могут идти одновременно, и между проверкой и вставкой влезет вторая.
+  private async ensureImport(event: ImportParsed): Promise<boolean> {
+    return this.prisma.withUser(event.userId, async (tx) => {
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        insert into imports (id, account_id, source, file_hash, status)
+        values (
+          ${event.importId}::uuid, ${event.accountId}::uuid,
+          ${event.source}, ${event.fileHash}, 'parsing'
+        )
+        on conflict (account_id, file_hash) do nothing
+        returning id
+      `
+      return rows.length > 0
+    })
   }
 
   async onApplicationShutdown(): Promise<void> {

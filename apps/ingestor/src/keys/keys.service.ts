@@ -1,29 +1,25 @@
-import { readFileSync } from 'node:fs'
 import { Injectable, Logger } from '@nestjs/common'
 import type { OnApplicationBootstrap } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
 import { EXCHANGE_KEY_SAVE_QUEUE, KEYS_TOPIC } from '@thesis/contracts'
-import { parseMasterKey, unseal } from '@thesis/contracts/crypto'
 import type { ExchangeKeyChecked, ExchangeKeySave } from '@thesis/contracts'
 import { BybitClient } from '../connectors/bybit/client.ts'
 import { ExternalCall } from '../outbound/external-call.ts'
 import { verdict } from '../connectors/bybit/api-key.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { PrismaService } from '../db/prisma.service.ts'
-import { PermanentFailure, RabbitConsumer } from '../rabbit/rabbit.consumer.ts'
-import type { Env } from '../config/env.ts'
+import { RabbitConsumer } from '../rabbit/rabbit.consumer.ts'
+import { KeyVault } from './vault.ts'
 
 @Injectable()
 export class KeysService implements OnApplicationBootstrap {
   private readonly log = new Logger(KeysService.name)
-  private masterKey: Buffer | null = null
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxRepository,
+    private readonly vault: KeyVault,
     private readonly calls: ExternalCall,
     private readonly rabbit: RabbitConsumer,
-    private readonly config: ConfigService<Env, true>,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -31,7 +27,7 @@ export class KeysService implements OnApplicationBootstrap {
   }
 
   async save(command: ExchangeKeySave): Promise<void> {
-    const secret = this.open(command)
+    const secret = this.vault.open(this.box(command))
 
     // Права спрашиваем **до** записи: ключ, которому мы откажем, не должен
     // попасть на диск вовсе. Иначе отклонённый секрет полежал бы в базе
@@ -78,31 +74,5 @@ export class KeysService implements OnApplicationBootstrap {
       nonce: Buffer.from(command.nonceBase64, 'base64'),
       tag: Buffer.from(command.tagBase64, 'base64'),
     }
-  }
-
-  // Расшифровка нужна дважды: без секрета не подписать запрос к бирже, и она же
-  // проверка целостности — разъехавшиеся мастер-ключи api и воркера видно
-  // здесь, а не при первой синхронизации.
-  private open(command: ExchangeKeySave): string {
-    try {
-      return unseal(this.box(command), this.master())
-    } catch (error) {
-      // Повторять нечего: тот же шифротекст не расшифруется и со второй
-      // попытки. В отстойник, с причиной.
-      throw new PermanentFailure(`ключ не расшифровывается: ${String(error)}`)
-    }
-  }
-
-  // Читается один раз и лениво: воркер без биржевых ключей работает как
-  // раньше, а при первой же команде отсутствие файла — отказ навсегда, а не
-  // три попытки вслепую.
-  private master(): Buffer {
-    if (this.masterKey) return this.masterKey
-
-    const path = this.config.get('MASTER_KEY_FILE', { infer: true })
-    if (!path) throw new PermanentFailure('пришёл ключ биржи, а MASTER_KEY_FILE у воркера не задан')
-
-    this.masterKey = parseMasterKey(readFileSync(path, 'utf8'))
-    return this.masterKey
   }
 }

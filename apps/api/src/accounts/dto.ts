@@ -7,7 +7,11 @@ export const createAccountSchema = z.object({
   // название — значит мешать. Назвать можно будет позже.
   name: z.string().trim().min(1).max(50).optional(),
   provider: z.enum(['bybit', 'bitget', 'tinvest', 'sber', 'manual']),
-  baseCurrency: z.string().length(3).toUpperCase(),
+  // Три-десять символов, как и CHECK в базе: тикеры стейблкоинов в ISO 4217 не
+  // укладываются — `USDT`, `USDC`. Проверка длины осталась тройкой после
+  // задачи 20, которая расширила колонки, и первая же крипто-сделка упёрлась
+  // в неё, а не в базу.
+  baseCurrency: z.string().trim().min(3).max(10).toUpperCase(),
   isIis: z.boolean().default(false),
 })
 

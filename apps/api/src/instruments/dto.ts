@@ -5,7 +5,11 @@ export const createInstrumentSchema = z.object({
   // инструментами, и сделки по одной бумаге разъедутся по трём позициям.
   symbol: z.string().trim().min(1).max(32).toUpperCase(),
   class: z.enum(['equity', 'bond', 'etf', 'crypto', 'currency']),
-  currency: z.string().length(3).toUpperCase(),
+  // Три-десять символов, как и CHECK в базе: тикеры стейблкоинов в ISO 4217 не
+  // укладываются — `USDT`, `USDC`. Проверка длины осталась тройкой после
+  // задачи 20, которая расширила колонки, и первая же крипто-сделка упёрлась
+  // в неё, а не в базу.
+  currency: z.string().trim().min(3).max(10).toUpperCase(),
 })
 
 export type CreateInstrument = z.infer<typeof createInstrumentSchema>

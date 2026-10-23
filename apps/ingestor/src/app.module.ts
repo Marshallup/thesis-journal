@@ -7,6 +7,7 @@ import { QuietLogger } from './config/quiet-logger.ts'
 import type { Env } from './config/env.ts'
 import { DbModule } from './db/db.module.ts'
 import { HealthServer } from './health/health.server.ts'
+import { BybitModule } from './connectors/bybit/bybit.module.ts'
 import { ImportsModule } from './imports/imports.module.ts'
 import { KeysModule } from './keys/keys.module.ts'
 import { OutboxRelayModule } from './outbox/outbox-relay.module.ts'
@@ -51,6 +52,7 @@ const ENV_FILE = '.env'
     OutboxRelayModule,
     ImportsModule,
     KeysModule,
+    BybitModule,
   ],
   providers: [QuietLogger, HealthServer],
 })

@@ -53,6 +53,10 @@ export type ImportParsed = {
   accountId: string
   userId: string
   source: string
+  // sha256 содержимого. Для файла его знает api ещё при загрузке, для
+  // синхронизации — только воркер, и только после ответа биржи: строку
+  // `imports` в этом случае создаёт консьюмер.
+  fileHash?: string
   // Пусто и error заполнен — разбор отказал. Отдельного топика под отказ нет:
   // потребитель один и тот же, и ему важно не «что случилось», а «что теперь
   // с этим импортом».
@@ -97,4 +101,17 @@ export type ExchangeKeyChecked = {
   scopes: string[]
   reason?: string
   checkedAt: string
+}
+
+// Команда «синхронизируй счёт». Ключ у воркера, период — его дело: api знает
+// только, какой счёт просят и от какой даты, если просят с конкретной.
+export const ACCOUNT_SYNC_QUEUE = 'account.sync'
+
+export type AccountSync = {
+  accountId: string
+  userId: string
+  exchange: 'bybit'
+  // ISO UTC. Пусто — воркер продолжит с того места, где остановился, а при
+  // первой синхронизации возьмёт доступную биржей глубину.
+  from?: string
 }
