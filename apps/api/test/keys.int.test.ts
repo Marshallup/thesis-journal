@@ -15,6 +15,7 @@ import { withTestDb } from './setup-db.ts'
 
 let db: Awaited<ReturnType<typeof withTestDb>>
 let prisma: PrismaService
+let keys: KeysService
 
 // Мастер-ключ лежит файлом и в тестах тоже: читает его тот же код, что в
 // проде, и путь в окружении — часть проверяемого поведения.
@@ -30,29 +31,26 @@ const publisher: Pick<RabbitPublisher, 'send'> = {
   },
 }
 
-function configFor(allowlist: string): ConfigService<Env, true> {
+function configFor(enabled: boolean): ConfigService<Env, true> {
   return {
-    get: (key: string) => (key === 'EXCHANGE_KEYS_ALLOWLIST' ? allowlist : keyFile),
+    get: (key: string) => (key === 'EXCHANGE_KEYS_ENABLED' ? enabled : keyFile),
   } as unknown as ConfigService<Env, true>
 }
 
-function serviceWith(allowlist: string): KeysService {
-  return new KeysService(prisma, publisher as RabbitPublisher, configFor(allowlist))
+function serviceWith(enabled: boolean): KeysService {
+  return new KeysService(prisma, publisher as RabbitPublisher, configFor(enabled))
 }
 
-async function seedAccount(email: string) {
-  const user = await db.prisma.user.create({ data: { email, passwordHash: 'x' } })
-  const account = await db.prisma.account.create({
-    data: { userId: user.id, provider: 'bybit', kind: 'exchange', baseCurrency: 'USDT' },
+// Свой пользователь на каждый тест: счета и ключи у них не должны
+// пересекаться, иначе «один ключ на счёт» проверялся бы на чужих строках.
+async function seedAccount(provider = 'bybit') {
+  const user = await db.prisma.user.create({
+    data: { email: `keys-${randomUUID()}@example.com`, passwordHash: 'x' },
   })
-  return { userId: user.id, accountId: account.id, email }
-}
-
-// Своя почта на каждый тест: она уникальна в базе, и список доступа строится
-// вокруг неё — иначе тесты делили бы одного пользователя.
-async function seedAllowed() {
-  const account = await seedAccount(`keys-owner-${randomUUID()}@example.com`)
-  return { ...account, keys: serviceWith(account.email) }
+  const account = await db.prisma.account.create({
+    data: { userId: user.id, provider, kind: 'exchange', baseCurrency: 'USDT' },
+  })
+  return { userId: user.id, accountId: account.id }
 }
 
 beforeAll(async () => {
@@ -61,6 +59,7 @@ beforeAll(async () => {
   writeFileSync(keyFile, `${masterKey.toString('hex')}\n`, { mode: 0o600 })
   prisma = new PrismaService()
   await prisma.$connect()
+  keys = serviceWith(true)
 })
 
 beforeEach(() => {
@@ -76,7 +75,7 @@ afterAll(async () => {
 // открытым текстом. Шифротекст при этом настоящий — расшифровывается тем же
 // мастер-ключом, которым зашифрован.
 it('наружу уходит маска, а секрет — только шифротекстом', async () => {
-  const { userId, accountId, keys } = await seedAllowed()
+  const { userId, accountId } = await seedAccount()
 
   const saved = await keys.save(userId, accountId, {
     exchange: 'bybit',
@@ -106,7 +105,7 @@ it('наружу уходит маска, а секрет — только ши�
 // В таблице api со стороны человека тоже нет секрета — только маска. Проверка
 // не про код, а про схему: колонки, в которую можно положить ключ, нет.
 it('в строке api секрета нет, только маска и статус', async () => {
-  const { userId, accountId, keys } = await seedAllowed()
+  const { userId, accountId } = await seedAccount()
 
   await keys.save(userId, accountId, {
     exchange: 'bybit',
@@ -124,7 +123,7 @@ it('в строке api секрета нет, только маска и ста
 // Второй ключ к тому же счёту — это замена первого. И замена сбрасывает
 // проверку прав: новый ключ не наследует «уже проверен» от прежнего.
 it('повторная отправка заменяет ключ и сбрасывает проверку', async () => {
-  const { userId, accountId, keys } = await seedAllowed()
+  const { userId, accountId } = await seedAccount()
 
   await keys.save(userId, accountId, {
     exchange: 'bybit',
@@ -152,11 +151,11 @@ it('повторная отправка заменяет ключ и сбрас�
 // Чужой счёт не принимает ключ: иначе ключ лёг бы к счёту другого человека, а
 // синхронизация записала бы ему чужие сделки.
 it('ключ к чужому счёту не записывается', async () => {
-  const mine = await seedAllowed()
-  const theirs = await seedAllowed()
+  const mine = await seedAccount()
+  const theirs = await seedAccount()
 
   await expect(
-    mine.keys.save(mine.userId, theirs.accountId, {
+    keys.save(mine.userId, theirs.accountId, {
       exchange: 'bybit',
       apiKey: 'bybitPublicPartCCCC',
       apiSecret: 'чужой',
@@ -167,34 +166,36 @@ it('ключ к чужому счёту не записывается', async ()
   expect(sent).toHaveLength(0)
 })
 
-// Фича за флагом: пока не пройден первый настоящий ключ, ввод секретов открыт
-// только по списку. Отказ случается до записи и до отправки команды.
-it('пользователь вне списка получает отказ, и команда не уходит', async () => {
-  const { userId, accountId } = await seedAccount(`stranger-${randomUUID()}@example.com`)
-  const forSomeoneElse = serviceWith(`owner-${randomUUID()}@example.com`)
+// Ключи — не про одного человека: у каждого счёта свой ключ, и счета разных
+// людей друг другу не мешают. Это и есть смысл того, что флаг не знает, кто
+// пришёл.
+it('у каждого счёта свой ключ, и счета друг на друга не влияют', async () => {
+  const first = await seedAccount()
+  const second = await seedAccount('bitget')
 
-  await expect(
-    forSomeoneElse.save(userId, accountId, {
-      exchange: 'bybit',
-      apiKey: 'bybitPublicPartDDDD',
-      apiSecret: 'не-должен-дойти',
-    }),
-  ).rejects.toThrow(ForbiddenException)
+  await keys.save(first.userId, first.accountId, {
+    exchange: 'bybit',
+    apiKey: 'bybitPublicPart1111',
+    apiSecret: 'ключ-первого',
+  })
+  await keys.save(second.userId, second.accountId, {
+    exchange: 'bybit',
+    apiKey: 'bybitPublicPart2222',
+    apiSecret: 'ключ-второго',
+  })
 
-  expect(await db.prisma.apiKey.count({ where: { accountId } })).toBe(0)
-  expect(sent).toHaveLength(0)
+  const rows = await db.prisma.apiKey.findMany({
+    where: { accountId: { in: [first.accountId, second.accountId] } },
+    orderBy: { keyMask: 'asc' },
+  })
+  expect(rows.map((row) => row.keyMask)).toEqual(['bybi…1111', 'bybi…2222'])
 })
 
-// Выключенная фича не требует мастер-ключа и не притворяется работающей.
-it('с пустым списком фича выключена целиком', async () => {
-  const { userId, accountId } = await seedAccount(`off-${randomUUID()}@example.com`)
-  const disabled = new KeysService(
-    prisma,
-    publisher as RabbitPublisher,
-    {
-      get: () => '',
-    } as unknown as ConfigService<Env, true>,
-  )
+// Выключенная фича не требует мастер-ключа и не притворяется работающей:
+// отказ случается до записи и до отправки команды.
+it('выключенный флаг отказывает до записи и до команды', async () => {
+  const { userId, accountId } = await seedAccount()
+  const disabled = serviceWith(false)
 
   await expect(
     disabled.save(userId, accountId, {
@@ -203,4 +204,7 @@ it('с пустым списком фича выключена целиком', 
       apiSecret: 'выключено',
     }),
   ).rejects.toThrow(ForbiddenException)
+
+  expect(await db.prisma.apiKey.count({ where: { accountId } })).toBe(0)
+  expect(sent).toHaveLength(0)
 })
