@@ -15,6 +15,11 @@ const PROVIDERS = [
   { value: 'bitget', label: 'Bitget' },
 ] as const
 
+// Валюта по умолчанию следует из провайдера: у биржи это USDT, а не USD —
+// пары котируются в нём, и баланс спота номинирован в нём же. Приравнивать
+// их — отдельное допущение, и место ему не в форме.
+const CURRENCY_BY_PROVIDER: Record<string, string> = { bybit: 'USDT', bitget: 'USDT' }
+
 export function AccountForm() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -26,6 +31,9 @@ export function AccountForm() {
   const [name, setName] = useState('')
   const [provider, setProvider] = useState<string>('manual')
   const [baseCurrency, setBaseCurrency] = useState('RUB')
+  // Подсказку перестаём навязывать, как только человек ввёл своё: у него может
+  // быть счёт в валюте, которой мы не знаем.
+  const [currencyTouched, setCurrencyTouched] = useState(false)
   const [isIis, setIsIis] = useState(false)
 
   const save = useMutation({
@@ -81,7 +89,12 @@ export function AccountForm() {
           <span className="text-sm text-ink-muted">Где счёт</span>
           <select
             value={provider}
-            onChange={(event) => setProvider(event.target.value)}
+            onChange={(event) => {
+              setProvider(event.target.value)
+              if (!currencyTouched) {
+                setBaseCurrency(CURRENCY_BY_PROVIDER[event.target.value] ?? 'RUB')
+              }
+            }}
             className="rounded-sm border border-rule bg-surface px-2 py-1.5"
           >
             {PROVIDERS.map((item) => (
@@ -96,12 +109,22 @@ export function AccountForm() {
           <span className="text-sm text-ink-muted">Базовая валюта</span>
           <input
             value={baseCurrency}
-            onChange={(event) => setBaseCurrency(event.target.value.toUpperCase())}
+            onChange={(event) => {
+              setCurrencyTouched(true)
+              setBaseCurrency(event.target.value.toUpperCase())
+            }}
             required
             minLength={3}
-            maxLength={3}
-            className="tabular w-24 rounded-sm border border-rule bg-surface px-2 py-1.5"
+            // Десять, а не три: тикеры стейблкоинов в ISO 4217 не укладываются,
+            // и с тройкой биржевой счёт нельзя было завести вовсе — поле просто
+            // не давало дописать `USDT`.
+            maxLength={10}
+            className="tabular w-28 rounded-sm border border-rule bg-surface px-2 py-1.5"
           />
+          <span className="text-xs text-ink-muted">
+            Код валюты, в которой считается счёт: RUB, USD. У биржи это стейблкоин — USDT: пары
+            котируются в нём, и USD на таком счёте не бывает.
+          </span>
         </label>
 
         <label className="flex items-center gap-2">
