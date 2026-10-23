@@ -20,7 +20,6 @@ function mask(apiKey: string): string {
 @Injectable()
 export class KeysService {
   private readonly log = new Logger(KeysService.name)
-  private readonly allowlist: Set<string>
   private readonly masterKey: Buffer | null
 
   constructor(
@@ -28,24 +27,16 @@ export class KeysService {
     private readonly rabbit: RabbitPublisher,
     config: ConfigService<Env, true>,
   ) {
-    this.allowlist = new Set(
-      (config.get('EXCHANGE_KEYS_ALLOWLIST', { infer: true }) ?? '')
-        .split(',')
-        .map((email) => email.trim().toLowerCase())
-        .filter(Boolean),
-    )
-
-    // Пустой allowlist — фича выключена, и мастер-ключ не нужен. Непустой —
-    // ключ читается здесь, на старте: процесс должен падать сейчас, а не на
-    // первом ключе пользователя.
-    if (this.allowlist.size === 0) {
+    // Фича выключена — мастер-ключ не нужен. Включена — читается здесь, на
+    // старте: процесс должен падать сейчас, а не на первом ключе пользователя.
+    if (!config.get('EXCHANGE_KEYS_ENABLED', { infer: true })) {
       this.masterKey = null
       return
     }
 
     const path = config.get('MASTER_KEY_FILE', { infer: true })
     if (!path) {
-      throw new Error('EXCHANGE_KEYS_ALLOWLIST задан, а MASTER_KEY_FILE нет: шифровать нечем')
+      throw new Error('EXCHANGE_KEYS_ENABLED включён, а MASTER_KEY_FILE нет: шифровать нечем')
     }
     this.masterKey = parseMasterKey(readFileSync(path, 'utf8'))
   }
@@ -53,7 +44,7 @@ export class KeysService {
   // Ключ принимается, но пока не используется: права проверит коннектор при
   // первом подключении, и до тех пор статус — unverified.
   async save(userId: string, accountId: string, input: SaveKey): Promise<SavedKey> {
-    const masterKey = await this.allowed(userId)
+    const masterKey = this.enabled()
 
     const saved = await this.prisma.withUser(userId, async (tx) => {
       // Явный фильтр по userId, RLS под ним — и это же проверка владения счётом.
@@ -95,20 +86,16 @@ export class KeysService {
     return { id: saved.id, mask: mask(input.apiKey), status: 'unverified' }
   }
 
-  // Фича-флаг: пока не пройден первый настоящий ключ, открывать ввод секретов
-  // всем остальным незачем. Список — по почте: её человек может написать в
-  // окружении, а свой идентификатор он не знает.
-  private async allowed(userId: string): Promise<Buffer> {
+  // Фича-флаг на весь эндпоинт: выключено — отказ до записи и до отправки
+  // команды. Кто именно пришёл, флага не касается: владение счётом проверяет
+  // сам запрос, а чужие строки закрывает RLS.
+  private enabled(): Buffer {
     const masterKey = this.masterKey
-    const refusal = 'приём биржевых ключей выключен: сейчас только ручной импорт отчётов'
-    if (!masterKey) throw new ForbiddenException(refusal)
-
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { email: true },
-    })
-    if (!this.allowlist.has(user.email.toLowerCase())) throw new ForbiddenException(refusal)
-
+    if (!masterKey) {
+      throw new ForbiddenException(
+        'приём биржевых ключей выключен: сейчас только ручной импорт отчётов',
+      )
+    }
     return masterKey
   }
 }
