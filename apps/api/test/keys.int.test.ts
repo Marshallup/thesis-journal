@@ -90,6 +90,9 @@ it('наружу уходит маска, а секрет — только ши�
   const command = sent[0]
   expect(command).toBeDefined()
   expect(JSON.stringify(command)).not.toContain('очень-секретный-секрет')
+  // Владелец едет в команде: статус проверки воркер вернёт событием, а писать
+  // его в api придётся под RLS — без userId там писать нечем.
+  expect(command?.userId).toBe(userId)
   expect(
     unseal(
       {

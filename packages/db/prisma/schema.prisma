@@ -92,6 +92,9 @@ model ApiKey {
   // сохранён, но не использован.
   status      String
   permissions Json?     @db.JsonB
+  // Причина отказа — для человека: проверка асинхронная, и «отклонён» без
+  // объяснения не говорит, какие галочки снять.
+  error       String?
   verifiedAt  DateTime? @map("verified_at") @db.Timestamptz(6)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 

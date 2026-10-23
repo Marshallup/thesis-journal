@@ -73,6 +73,7 @@ export class KeysService {
     const box = seal(input.apiSecret, masterKey)
     const command: ExchangeKeySave = {
       accountId,
+      userId,
       exchange: input.exchange,
       apiKeyPublic: input.apiKey,
       ciphertextBase64: box.ciphertext.toString('base64'),
