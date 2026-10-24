@@ -28,8 +28,9 @@ export type Skipped = {
   // нет (решено 24.10.2026), но молчать о них нельзя — в иной год они делают
   // весь результат.
   derivatives: number
-  // Вывод монеты из кошелька: остаток на бирже уменьшился, а в журнале для
-  // этого нет операции. Запись в docs/unknowns.md.
+  // Сколько монет выведено с биржи. Теперь они становятся выбытием, а не
+  // пропадают, но число остаётся: человеку полезно видеть, что часть движения
+  // портфеля — не торговля, а переводы.
   withdrawals: number
   // Файл архива, который мы не знаем.
   unknownFiles: string[]
@@ -57,6 +58,21 @@ function tickerOf(coin: string): string {
 
 // Все суммы проходят через Money: выгрузка пишет восемнадцать нулей после
 // запятой, и в журнале им места нет — а заодно это проверка, что число читается.
+// Вывод монеты: лоты списываются, как при продаже, а цена берётся по рынку на
+// момент вывода. Без этого монета остаётся в журнале навсегда — остаток не
+// сойдётся с биржей, а убыток от вывода обесценившейся монеты не увидит никто.
+function disposal(coin: string, quantity: string, when: string, origin: string): RawOperation {
+  return {
+    kind: 'disposal',
+    ticker: tickerOf(coin),
+    instrumentClass: 'crypto',
+    quantity: Money.of(quantity).abs().toString(),
+    currency: QUOTE,
+    executedAt: when,
+    externalId: idOf([origin, coin, quantity, when]),
+  }
+}
+
 function arrival(coin: string, quantity: string, when: string, origin: string): RawOperation {
   return {
     kind: 'arrival',
@@ -171,10 +187,15 @@ function parseUta(rows: Leg[], skipped: Skipped): RawOperation[] {
         const coin = row.Currency ?? ''
         const change = Money.of(row['Cash Flow'] || '0')
         if (!STABLES.has(coin) && !change.eq(ZERO)) {
+          const when = atUtc(row['Time(UTC)'] ?? '')
           if (change.gt(ZERO)) {
-            const when = atUtc(row['Time(UTC)'] ?? '')
             arrivals.push(arrival(coin, change.toString(), when, row.Type ?? ''))
-          } else skipped.withdrawals += 1
+          } else {
+            // Монета убыла строкой незнакомого типа — конвертация в другой
+            // токен, списание площадкой. Выбытие, а не молчание.
+            arrivals.push(disposal(coin, change.toString(), when, row.Type ?? ''))
+            skipped.withdrawals += 1
+          }
         }
       }
       continue
@@ -330,7 +351,10 @@ function parseDeposits(rows: Leg[], skipped: Skipped): RawOperation[] {
           executedAt: when,
           externalId: idOf(['withdraw', asset, row['Tx ID'] ?? '', when]),
         })
-      } else skipped.withdrawals += 1
+      } else {
+        operations.push(disposal(asset, row.Amount ?? '0', when, `withdraw:${row['Tx ID'] ?? ''}`))
+        skipped.withdrawals += 1
+      }
       continue
     }
 

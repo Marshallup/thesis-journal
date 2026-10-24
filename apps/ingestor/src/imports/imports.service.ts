@@ -53,7 +53,8 @@ export class ImportsService implements OnApplicationBootstrap {
   // Разбор отчёта: сырьё на место, операции — событием. Сети здесь нет, и
   // любая неудача разбора — отказ навсегда: тот же файл не переживёт второй
   // попытки иначе, чем первой.
-  // Монета, пришедшая не сделкой, получает цену рынка на момент зачисления.
+  // Монета, пришедшая не сделкой или ушедшая не продажей, получает цену рынка
+  // на тот момент.
   // Это не настоящая себестоимость — настоящая осталась там, где монету
   // купили, — а ответ на вопрос «сколько я заработал на этой бирже»: пришёл
   // BTC по 97 000, продал по 99 500, заработал разницу. Решено 24.10.2026.
@@ -63,7 +64,8 @@ export class ImportsService implements OnApplicationBootstrap {
   private async valueArrivals(operations: RawOperation[]): Promise<RawOperation[]> {
     return Promise.all(
       operations.map(async (operation) => {
-        if (operation.kind !== 'arrival' || !operation.ticker) return operation
+        const estimated = operation.kind === 'arrival' || operation.kind === 'disposal'
+        if (!estimated || !operation.ticker) return operation
         const close = await this.market.closeAt(operation.ticker, new Date(operation.executedAt))
         return close ? { ...operation, price: close } : operation
       }),

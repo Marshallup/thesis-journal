@@ -93,10 +93,14 @@ it('стейблкоины идут деньгами, переводы межд�
   expect(cash.every((operation) => operation.cashKind === 'deposit')).toBe(true)
 })
 
-// Вывод монеты уменьшает остаток на бирже, а операции «списать лот без
-// продажи» в журнале нет. Молчать нельзя: иначе остаток разойдётся.
-it('вывод монеты не применяется, но попадает в счётчик', () => {
-  expect(statement().skipped.withdrawals).toBe(1)
+// Вывод монеты — выбытие: лоты списываются, как при продаже. Без этого монета
+// остаётся в журнале навсегда и остаток не сходится с биржей.
+it('вывод монеты становится выбытием и попадает в счётчик', () => {
+  const result = statement()
+  const disposals = result.operations.filter((operation) => operation.kind === 'disposal')
+
+  expect(disposals).toMatchObject([{ ticker: 'NEARUSDT', quantity: '1' }])
+  expect(result.skipped.withdrawals).toBe(1)
 })
 
 // Заявка дробится на исполнения, и все они приходят одной группой: одно время,
