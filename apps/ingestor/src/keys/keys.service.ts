@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import type { OnApplicationBootstrap } from '@nestjs/common'
 import { EXCHANGE_KEY_SAVE_QUEUE, KEYS_TOPIC } from '@thesis/contracts'
 import type { ExchangeKeyChecked, ExchangeKeySave } from '@thesis/contracts'
-import { BybitClient } from '../connectors/bybit/client.ts'
+import { BybitClient, isPermanent } from '../connectors/bybit/client.ts'
 import { ExternalCall } from '../outbound/external-call.ts'
 import { verdict } from '../connectors/bybit/api-key.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
@@ -33,8 +33,7 @@ export class KeysService implements OnApplicationBootstrap {
     // попасть на диск вовсе. Иначе отклонённый секрет полежал бы в базе
     // столько, сколько заняла проверка, — и остался бы в бэкапе.
     const client = new BybitClient({ apiKey: command.apiKeyPublic, secret }, this.calls)
-    const info = await client.queryApiKey()
-    const check = verdict(info)
+    const check = await this.check(client)
 
     const event: ExchangeKeyChecked = {
       accountId: command.accountId,
@@ -66,6 +65,19 @@ export class KeysService implements OnApplicationBootstrap {
         ? `ключ ${command.exchange} счёта ${command.accountId} сохранён`
         : `ключ ${command.exchange} счёта ${command.accountId} отклонён: ${check.reason}`,
     )
+  }
+
+  // Биржа может не принять ключ вовсе — опечатка, истёкший срок, белый список
+  // адресов. Повторять это бессмысленно, а экран без ответа навсегда остался
+  // бы на «ждёт проверки»: поэтому такой отказ становится вердиктом с причиной
+  // от самой биржи.
+  private async check(client: BybitClient): Promise<ReturnType<typeof verdict>> {
+    try {
+      return verdict(await client.queryApiKey())
+    } catch (error) {
+      if (!isPermanent(error)) throw error
+      return { ok: false, scopes: [], reason: `биржа не приняла ключ: ${String(error)}` }
+    }
   }
 
   private box(command: ExchangeKeySave) {

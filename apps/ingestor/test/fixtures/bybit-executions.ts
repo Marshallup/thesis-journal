@@ -74,3 +74,18 @@ export const loopingPage = {
   retMsg: 'OK',
   result: { list: [row({ execId: 'exec-5' })], nextPageCursor: 'page-2' },
 }
+
+// Ошибка в параметрах: именно её отдала биржа на запрос ровно за два года.
+// Повторять такое бессмысленно — параметр от повтора не исправится.
+export const badParams = {
+  retCode: 10001,
+  retMsg: "Can't query order earlier than 2 years, please check your params: startTime or endTime!",
+  result: {},
+}
+
+// Лимит запросов: ошибка провайдера, а не наша. Её как раз надо повторить.
+export const rateLimited = {
+  retCode: 10006,
+  retMsg: 'Too many visits!',
+  result: {},
+}

@@ -13,6 +13,35 @@ const TIMEOUT_MS = 10_000
 // retCode.
 type Envelope<T> = { retCode: number; retMsg: string; result: T }
 
+// Код ответа нужен вызывающему, а не только в тексте ошибки: по нему видно,
+// чья это ошибка. Правило проекта требует различать их — ошибка провайдера
+// ретраится, своя нет.
+export class BybitError extends Error {
+  constructor(
+    readonly retCode: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'BybitError'
+  }
+}
+
+// Параметры, ключ, подпись, права, адрес — всё это наши ошибки: повтор их не
+// лечит, а три попытки впустую только тратят лимит и время. Остальное (лимиты,
+// пятисотки, сеть) ретраится, как и раньше.
+const PERMANENT = new Set([
+  10001, // ошибка в параметрах запроса
+  10003, // ключ недействителен
+  10004, // подпись не сошлась
+  10005, // у ключа нет прав на этот запрос
+  10010, // запрос с адреса, не входящего в белый список ключа
+  33004, // срок действия ключа истёк
+])
+
+export function isPermanent(error: unknown): boolean {
+  return error instanceof BybitError && PERMANENT.has(error.retCode)
+}
+
 export type ExecutionPage = {
   list: Execution[]
   nextPageCursor: string
@@ -67,7 +96,9 @@ export class BybitClient {
     if (!response.ok) throw new Error(`Bybit ${path} ответил ${response.status}`)
 
     const body = (await response.json()) as Envelope<T>
-    if (body.retCode !== 0) throw new Error(`Bybit ${path}: ${body.retCode} ${body.retMsg}`)
+    if (body.retCode !== 0) {
+      throw new BybitError(body.retCode, `Bybit ${path}: ${body.retCode} ${body.retMsg}`)
+    }
     return body.result
   }
 }

@@ -11,7 +11,14 @@ import { KeyVault } from '../src/keys/vault.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
-import { emptyPage, firstPage, loopingPage, secondPage } from './fixtures/bybit-executions.ts'
+import {
+  badParams,
+  emptyPage,
+  firstPage,
+  loopingPage,
+  rateLimited,
+  secondPage,
+} from './fixtures/bybit-executions.ts'
 import type { Env } from '../src/config/env.ts'
 import type { ExternalCall } from '../src/outbound/external-call.ts'
 import type { ImportParsed } from '@thesis/contracts'
@@ -210,4 +217,49 @@ it('без сохранённого ключа — отказ навсегда',
   await expect(
     sync.run(command(randomUUID(), new Date(Date.now() - 86_400_000).toISOString())),
   ).rejects.toThrow(PermanentFailure)
+})
+
+// Та самая ошибка, на которой синхронизация не пошла вовсе: граница двух лет у
+// биржи строгая. Запрос без даты должен укладываться внутрь неё.
+it('первое окно просит историю внутри двух лет, а не ровно за два года', async () => {
+  const accountId = randomUUID()
+  await seedKey(accountId)
+  const { urls } = answerPages([emptyPage])
+  const twoYearsAgo = Date.now() - 2 * 365 * 24 * 60 * 60 * 1000
+
+  // Без `from` и без курсора: именно так выглядит первая синхронизация.
+  await sync.run({ accountId, userId: randomUUID(), exchange: 'bybit' })
+
+  const start = Number(new URL(urls[0] ?? '').searchParams.get('startTime'))
+  expect(start).toBeGreaterThan(twoYearsAgo)
+})
+
+// Отказ по параметрам не лечится повтором, и молчать о нём нельзя: экран
+// смотрит на импорты, значит и отказ приезжает импортом.
+it('ошибка в параметрах становится отказом навсегда и видна импортом', async () => {
+  const accountId = randomUUID()
+  await seedKey(accountId)
+  answerPages([badParams])
+
+  await expect(
+    sync.run(command(accountId, new Date(Date.now() - 86_400_000).toISOString())),
+  ).rejects.toThrow(PermanentFailure)
+
+  const [event] = await published()
+  expect(event?.error).toContain('10001')
+  expect(event?.operations).toEqual([])
+})
+
+// Лимит провайдера — не наша ошибка: она уходит в повтор, и события об отказе
+// быть не должно, иначе экран показал бы отказ там, где его ещё нет.
+it('лимит биржи уходит в повтор, а не в отказ', async () => {
+  const accountId = randomUUID()
+  await seedKey(accountId)
+  answerPages([rateLimited])
+
+  const failure = sync.run(command(accountId, new Date(Date.now() - 86_400_000).toISOString()))
+  await expect(failure).rejects.toThrow(/10006/)
+  await expect(failure).rejects.not.toBeInstanceOf(PermanentFailure)
+
+  expect(await published()).toEqual([])
 })
