@@ -38,6 +38,7 @@ type PortfolioAccount = {
   unrealizedPnl: string
   unpricedPositions: number
   realizedWithoutCost?: string
+  derivativeRows?: number
   fees: string
   dividends: string
   totalPnl: string
@@ -97,6 +98,7 @@ export function TradesPage() {
   const unpriced = byAccount.reduce((sum, account) => sum + account.unpricedPositions, 0)
   // Проверка на наличие, а не только на «не ноль»: поля может не быть вовсе,
   // если сервер отвечает версией старше страницы.
+  const derivatives = byAccount.reduce((sum, account) => sum + (account.derivativeRows ?? 0), 0)
   const withoutCost = byAccount.filter(
     (account) => account.realizedWithoutCost && account.realizedWithoutCost !== '0',
   )
@@ -245,6 +247,19 @@ export function TradesPage() {
               . Это депозиты, airdrop'ы и конвертации: их себестоимость оценена по цене на момент
               зачисления, а не взята из сделки. Там, где биржа пары не знает, она нулевая — и
               прибыль завышена на всю стоимость монеты.
+            </p>
+          ) : null}
+
+          {derivatives > 0 ? (
+            // Решение «фьючерсы не считаем» принято сознательно, но счёт,
+            // где ими торговали, обязан сказать, что его итог — не про все
+            // деньги: позиция с плечом, фондирование и ликвидации в лотовую
+            // модель не ложатся.
+            <p className="mt-2 text-sm">
+              В выгрузках этого счёта было{' '}
+              <span className="tabular">{derivatives.toLocaleString('ru')}</span> строк с
+              фьючерсами. Журнал их не учитывает: позиция с плечом, фондирование и ликвидации не
+              описываются лотами, и в итог они не входят.
             </p>
           ) : null}
 
