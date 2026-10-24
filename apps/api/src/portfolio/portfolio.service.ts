@@ -40,11 +40,20 @@ export type PortfolioAccount = {
   fees: string
   dividends: string
   totalPnl: string
+  // Сколько открытых позиций счёта остались без цены. Ноль в
+  // `unrealizedPnl` при непустом счётчике значит «неизвестно», а не «нисколько»:
+  // без этого числа экран показывал бы ноль там, где цены просто нет.
+  unpricedPositions: number
 }
 
 // Итог на валюту, а не один на всё: доллар к рублю без курса не прибавить, а
 // конвертации в проекте пока нет вовсе.
-export type PortfolioCurrencyTotal = { currency: string; totalPnl: string }
+export type PortfolioCurrencyTotal = {
+  currency: string
+  totalPnl: string
+  // В валюте есть счёт с позициями без цены — значит итог неполон.
+  incomplete: boolean
+}
 
 export type PortfolioTotals = {
   // Стоимость только тех бумаг, по которым есть цена.
@@ -207,13 +216,17 @@ export class PortfolioService {
       const byAccount = accounts.map((account) => {
         let realizedOf = zero
         let unrealizedOf = zero
+        let unpriced = 0
         for (const position of positions) {
           if (position.accountId !== account.accountId) continue
           realizedOf = realizedOf.plus(position.realizedPnl)
           const quote = prices.get(position.instrumentId)
+          const closed = Money.of(position.quantity).eq(zero)
           // Бумага без цены в нереализованное не входит — ровно как в строках
-          // по бумагам: выдуманная цена хуже отсутствующей.
-          if (!quote || Money.of(position.quantity).eq(zero)) continue
+          // по бумагам: выдуманная цена хуже отсутствующей. Но молчать об этом
+          // нельзя: иначе ноль читается как «нереализованного нет».
+          if (!closed && !quote) unpriced += 1
+          if (!quote || closed) continue
           unrealizedOf = unrealizedOf.plus(
             Money.of(position.quantity).times(quote.price).minus(position.costBasisTotal),
           )
@@ -232,10 +245,12 @@ export class PortfolioService {
           fees: feesOf.toString(),
           dividends: dividendsOf.toString(),
           totalPnl: realizedOf.plus(unrealizedOf).plus(feesOf).plus(dividendsOf).toString(),
+          unpricedPositions: unpriced,
         }
       })
 
       const perCurrency = new Map<string, Money>()
+      const incompleteCurrencies = new Set<string>()
       for (const account of byAccount) {
         // Бумажный счёт в итог не входит: воображаемая торговля не смешивается
         // с настоящими деньгами. В строке он остаётся и помечен.
@@ -244,6 +259,7 @@ export class PortfolioService {
           account.baseCurrency,
           (perCurrency.get(account.baseCurrency) ?? zero).plus(account.totalPnl),
         )
+        if (account.unpricedPositions > 0) incompleteCurrencies.add(account.baseCurrency)
       }
 
       return {
@@ -252,6 +268,7 @@ export class PortfolioService {
         byCurrency: [...perCurrency].map(([currency, total]) => ({
           currency,
           totalPnl: total.toString(),
+          incomplete: incompleteCurrencies.has(currency),
         })),
         totals: {
           value: value.toString(),

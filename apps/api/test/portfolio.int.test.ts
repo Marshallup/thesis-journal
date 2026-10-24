@@ -94,7 +94,10 @@ it('складывает остатки, затраты и реализован�
   expect(accounts).toHaveLength(1)
   expect(money(accounts[0]!.totalPnl)).toBe(expected.toString())
   // Счёт один и рублёвый: итог по валютам — одна строка с тем же числом.
-  expect(byCurrency).toEqual([{ currency: 'RUB', totalPnl: expected.toString() }])
+  // Полноту итога проверяют свои тесты ниже; здесь важно, что валюта одна и
+  // сумма та же, что по счетам.
+  expect(byCurrency).toHaveLength(1)
+  expect(byCurrency[0]).toMatchObject({ currency: 'RUB', totalPnl: expected.toString() })
 })
 
 it('показывает бумагу с отложенной продажей и помечает её неполной', async () => {
@@ -301,4 +304,58 @@ it('счёт без сделок остаётся в разрезе с нуля�
   expect(money(row!.totalPnl)).toBe('0')
   expect(money(row!.realizedPnl)).toBe('0')
   expect(money(row!.unrealizedPnl)).toBe('0')
+})
+
+// Счёт, у которого цены нет ни по одной открытой позиции: нереализованное по
+// нему не ноль, а неизвестно. Ноль на экране читается как «ничего не нажил»,
+// и это вранье тем заметнее, чем больше позиций.
+it('счёт с позициями без цены считает их и не выдаёт ноль за ответ', async () => {
+  const { userId, accountId } = await seedAccount(`unpriced-account-${randomUUID()}@example.com`)
+  await importFixture(userId, accountId)
+  const sberId = (await db.prisma.instrument.findFirstOrThrow({ where: { symbol: 'SBER' } })).id
+  await db.prisma.instrumentPrice.deleteMany({ where: { instrumentId: sberId } })
+
+  const { accounts, byCurrency } = await portfolio.summary(userId)
+  const account = accounts.find((item) => item.accountId === accountId)!
+
+  expect(account.unpricedPositions).toBeGreaterThan(0)
+  expect(money(account.unrealizedPnl)).toBe('0')
+  // Валютный итог тоже помечен неполным: он посчитан без этих позиций.
+  expect(byCurrency.find((total) => total.currency === 'RUB')?.incomplete).toBe(true)
+})
+
+// Как только цена появилась, счётчик обнуляется, а нереализованное считается:
+// пометка должна исчезать сама, а не висеть вечно.
+//
+// Инструмент свой: справочник и цены общие для всех пользователей, и сосед по
+// файлу не должен решать, посчитается ли здесь нереализованное.
+it('с ценой счётчик пуст, а нереализованное посчитано', async () => {
+  const { userId, accountId } = await seedAccount(`priced-account-${randomUUID()}@example.com`)
+  const instrument = await db.prisma.instrument.create({
+    data: { symbol: `PRICED${randomUUID().slice(0, 8)}`, class: 'equity', currency: 'RUB' },
+  })
+  await trades.apply(userId, {
+    accountId,
+    instrumentId: instrument.id,
+    side: 'buy',
+    quantity: '10',
+    price: '100',
+    fee: '0',
+    executedAt: '2026-10-20T10:00:00.000Z',
+  })
+  await db.prisma.instrumentPrice.create({
+    data: {
+      instrumentId: instrument.id,
+      source: 'moex',
+      price: '120',
+      quotedAt: new Date('2026-10-24T15:45:00.000Z'),
+    },
+  })
+
+  const { accounts, byCurrency } = await portfolio.summary(userId)
+  const account = accounts.find((item) => item.accountId === accountId)!
+
+  expect(account.unpricedPositions).toBe(0)
+  expect(money(account.unrealizedPnl)).toBe('200')
+  expect(byCurrency.find((total) => total.currency === 'RUB')?.incomplete).toBe(false)
 })
