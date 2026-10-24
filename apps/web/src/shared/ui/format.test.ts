@@ -34,3 +34,13 @@ it('не считает минус-ноль убытком', () => {
   expect(isNegativeAmount('-0.01')).toBe(true)
   expect(isNegativeAmount('1')).toBe(false)
 })
+
+// Число, которого нет, не должно ронять страницу: формат и проверки получают
+// строку, а поле может не прийти вовсе — сервер отвечает версией старше
+// страницы. Экран показывает прочерк, а не белое полотно.
+it('пустая строка не считается нулём и не ломает проверки', () => {
+  expect(isZeroAmount('0')).toBe(true)
+  expect(isZeroAmount('-0.000')).toBe(true)
+  expect(isZeroAmount('')).toBe(true)
+  expect(isNegativeAmount('')).toBe(false)
+})
