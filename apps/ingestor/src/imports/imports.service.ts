@@ -6,6 +6,7 @@ import { PrismaService } from '../db/prisma.service.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { PermanentFailure, RabbitConsumer } from '../rabbit/rabbit.consumer.ts'
 import { parseBybitStatement } from './bybit-statement.ts'
+import { BybitMarket } from '../connectors/bybit/market.ts'
 import { parseSberXlsx } from './sber-xlsx.ts'
 
 type Parsed = { operations: RawOperation[]; skipped?: SkippedRows }
@@ -41,6 +42,7 @@ export class ImportsService implements OnApplicationBootstrap {
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxRepository,
+    private readonly market: BybitMarket,
     private readonly rabbit: RabbitConsumer,
   ) {}
 
@@ -51,6 +53,23 @@ export class ImportsService implements OnApplicationBootstrap {
   // Разбор отчёта: сырьё на место, операции — событием. Сети здесь нет, и
   // любая неудача разбора — отказ навсегда: тот же файл не переживёт второй
   // попытки иначе, чем первой.
+  // Монета, пришедшая не сделкой, получает цену рынка на момент зачисления.
+  // Это не настоящая себестоимость — настоящая осталась там, где монету
+  // купили, — а ответ на вопрос «сколько я заработал на этой бирже»: пришёл
+  // BTC по 97 000, продал по 99 500, заработал разницу. Решено 24.10.2026.
+  //
+  // Цены нет — остаётся ноль и пометка «себестоимость неизвестна»: выдумывать
+  // её нельзя, а прочерк честнее любого числа.
+  private async valueArrivals(operations: RawOperation[]): Promise<RawOperation[]> {
+    return Promise.all(
+      operations.map(async (operation) => {
+        if (operation.kind !== 'arrival' || !operation.ticker) return operation
+        const close = await this.market.closeAt(operation.ticker, new Date(operation.executedAt))
+        return close ? { ...operation, price: close } : operation
+      }),
+    )
+  }
+
   async parse(command: ImportParse): Promise<void> {
     const payload = await this.store(command)
 
@@ -61,7 +80,9 @@ export class ImportsService implements OnApplicationBootstrap {
     }
 
     try {
-      const { operations, skipped } = await PARSERS.get(command.source)!(payload)
+      const parsed = await PARSERS.get(command.source)!(payload)
+      const { skipped } = parsed
+      const operations = await this.valueArrivals(parsed.operations)
       await this.publish({
         ...this.envelope(command),
         operations,

@@ -4,6 +4,7 @@ import type { Redis } from 'ioredis'
 import { CircuitBreaker } from './circuit-breaker.ts'
 import { ExternalCall } from './external-call.ts'
 import { RateLimiter } from './rate-limiter.ts'
+import { BybitMarket } from '../connectors/bybit/market.ts'
 import { REDIS, redisProvider } from './redis.ts'
 
 // Соединение закрывается по SIGTERM вместе со всем остальным: правило проекта
@@ -22,7 +23,14 @@ class RedisLifecycle implements OnApplicationShutdown {
 // требует ограничителя и размыкателя на каждом внешнем вызове, а до сих пор
 // лимит жил полями планировщика, то есть памятью одного процесса.
 @Module({
-  providers: [redisProvider, RateLimiter, CircuitBreaker, ExternalCall, RedisLifecycle],
-  exports: [ExternalCall],
+  providers: [
+    redisProvider,
+    RateLimiter,
+    CircuitBreaker,
+    ExternalCall,
+    RedisLifecycle,
+    BybitMarket,
+  ],
+  exports: [ExternalCall, BybitMarket],
 })
 export class OutboundModule {}

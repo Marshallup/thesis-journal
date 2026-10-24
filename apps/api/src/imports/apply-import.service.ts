@@ -113,7 +113,9 @@ function asArrival(op: RawOperation): TradeOperation {
     ticker,
     instrumentClass,
     quantity,
-    price: '0',
+    // Цена есть — её поставил воркер по рынку на момент зачисления; нет —
+    // ноль и пометка «себестоимость неизвестна».
+    price: op.price ?? '0',
     fee: '0',
     currency: op.currency,
     executedAt: op.executedAt,

@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import { BybitSyncService } from '../src/connectors/bybit/sync.service.ts'
 import { ImportsService } from '../src/imports/imports.service.ts'
 import { KeyVault } from '../src/keys/vault.ts'
+import type { BybitMarket } from '../src/connectors/bybit/market.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
@@ -95,7 +96,10 @@ beforeAll(async () => {
     calls,
     consumer,
   )
-  imports = new ImportsService(prisma, new OutboxRepository(prisma), consumer)
+  // Рынок подменён: цены приходов проверяются своим тестом, а здесь нужен
+  // повторный разбор, который к бирже не ходит вовсе.
+  const market = { closeAt: () => Promise.resolve(null) } as unknown as BybitMarket
+  imports = new ImportsService(prisma, new OutboxRepository(prisma), market, consumer)
 })
 
 beforeEach(async () => {
