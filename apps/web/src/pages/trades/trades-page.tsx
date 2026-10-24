@@ -13,6 +13,10 @@ type Trade = {
   accountId: string
   instrumentId: string
   side: 'buy' | 'sell'
+  // Монета пришла не покупкой: депозит, airdrop, конвертация. В журнале это
+  // лот с нулевой себестоимостью, и на экране он обязан выглядеть иначе, чем
+  // покупка — иначе читается как «купил по нулю».
+  costUnknown?: boolean
   quantity: string
   price: string
   fee: string
@@ -338,12 +342,22 @@ export function TradesPage() {
                 {/* Пока символ не доехал — прочерк, а не часть uuid: обрезанный
                     идентификатор выглядит как данные, но ничего не значит. */}
                 <td className="h-8">{symbols.get(trade.instrumentId) ?? '—'}</td>
-                <td className="h-8">{trade.side === 'buy' ? 'покупка' : 'продажа'}</td>
+                <td className="h-8">
+                  {trade.costUnknown ? 'приход' : trade.side === 'buy' ? 'покупка' : 'продажа'}
+                </td>
                 <td className="h-8 text-right">
                   <Money value={trade.quantity} fractionDigits={0} maxFractionDigits={18} />
                 </td>
                 <td className="h-8 text-right">
-                  <Money value={trade.price} />
+                  {/* У прихода цены нет вовсе, а ноль читался бы как «досталось
+                      бесплатно» — это разные вещи. */}
+                  {trade.costUnknown ? (
+                    <span className="text-ink-muted" title="себестоимость неизвестна">
+                      —
+                    </span>
+                  ) : (
+                    <Money value={trade.price} />
+                  )}
                 </td>
                 <td className="h-8 text-right">
                   <Money value={trade.fee} />
@@ -352,6 +366,14 @@ export function TradesPage() {
             ))}
           </tbody>
         </table>
+      ) : null}
+
+      {trades.data?.some((trade) => trade.costUnknown) ? (
+        <p className="mt-2 text-xs text-ink-muted">
+          «Приход» — монета пришла не покупкой: депозит из сети, airdrop, конвертация токена. Цены
+          покупки у неё нет, себестоимость записана нулевой, и прибыль при продаже такой монеты
+          завышена на всю её стоимость.
+        </p>
       ) : null}
     </main>
   )
