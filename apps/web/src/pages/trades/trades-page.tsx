@@ -33,7 +33,7 @@ type PortfolioAccount = {
   realizedPnl: string
   unrealizedPnl: string
   unpricedPositions: number
-  realizedWithoutCost: string
+  realizedWithoutCost?: string
   fees: string
   dividends: string
   totalPnl: string
@@ -91,7 +91,11 @@ export function TradesPage() {
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
   const unpriced = byAccount.reduce((sum, account) => sum + account.unpricedPositions, 0)
-  const withoutCost = byAccount.filter((account) => account.realizedWithoutCost !== '0')
+  // Проверка на наличие, а не только на «не ноль»: поля может не быть вовсе,
+  // если сервер отвечает версией старше страницы.
+  const withoutCost = byAccount.filter(
+    (account) => account.realizedWithoutCost && account.realizedWithoutCost !== '0',
+  )
   // Подпись безымянного счёта уточняется только на фоне остальных.
   const labels = byAccount.map((account) => ({ ...account, id: account.accountId }))
   const hasPaper = byAccount.some((account) => account.kind === 'paper')
@@ -167,7 +171,9 @@ export function TradesPage() {
                   </td>
                   <td className="h-8 text-right">
                     <Money value={account.realizedPnl} signed />
-                    {account.realizedWithoutCost !== '0' ? <sup>†</sup> : null}
+                    {account.realizedWithoutCost && account.realizedWithoutCost !== '0' ? (
+                      <sup>†</sup>
+                    ) : null}
                   </td>
                   {/* Прочерк, а не ноль: если ни по одной открытой позиции нет
                       цены, нереализованного не «нисколько» — оно неизвестно.
