@@ -19,8 +19,11 @@ let bob: { token: string; instrumentId: string }
 let aliceToken = ''
 
 type Message = {
-  event: string
-  data: { total: string; currency: string; incomplete: boolean; ts: string }
+  type: string
+  total: string
+  currency: string
+  incomplete: boolean
+  ts: string
 }
 
 async function createApp() {
@@ -53,9 +56,8 @@ function open(): Promise<WebSocket> {
   })
 }
 
-// Конверт шлюза, а не свой: `{ event, data }` — то, что разбирает adapter.
 function auth(socket: WebSocket, token: string): void {
-  socket.send(JSON.stringify({ event: 'auth', data: { token } }))
+  socket.send(JSON.stringify({ type: 'auth', token }))
 }
 
 function collect(socket: WebSocket): Message[] {
@@ -131,8 +133,8 @@ it('не шлёт клиенту чужой портфель', async () => {
 
   // Сообщения есть — иначе тест был бы зелёным просто потому, что шлюз молчит.
   expect(seen.length).toBeGreaterThan(0)
-  expect(seen.every((message) => message.data.total === '0')).toBe(true)
-  expect(seen.some((message) => message.data.total === '500')).toBe(false)
+  expect(seen.every((message) => message.total === '0')).toBe(true)
+  expect(seen.some((message) => message.total === '500')).toBe(false)
 })
 
 // Обратная сторона того же: своё число должно приезжать само, без перезагрузки
@@ -147,7 +149,7 @@ it('свой итог приезжает после применённой це�
   await wait(1300)
   socket.close()
 
-  expect(seen.at(-1)?.data).toMatchObject({ total: '500', currency: 'RUB' })
+  expect(seen.at(-1)).toMatchObject({ type: 'portfolio.value', total: '500', currency: 'RUB' })
 })
 
 // Токен идёт первым сообщением, а не в query-строке: query попадает в логи
