@@ -33,8 +33,10 @@ export class CryptoPricesService {
   ) {}
 
   // Цена и событие о ней — одной транзакцией, как у котировок MOEX: проекция в
-  // api строится событиями, и цена без события осталась бы невидимой.
-  private async store(
+  // api строится событиями, и цена без события осталась бы невидимой. Публичный
+  // метод: тем же путём пишет поток тиков (задача 24b), и второго пути у цены
+  // быть не должно.
+  async save(
     rows: { instrumentId: string; symbol: string; price: string; quotedAt: Date }[],
   ): Promise<number> {
     if (rows.length === 0) return 0
@@ -100,7 +102,7 @@ export class CryptoPricesService {
         quotedAt,
       }))
 
-    return { saved: await this.store(rows), seen: pairs.length }
+    return { saved: await this.save(rows), seen: pairs.length }
   }
 
   // Курс доллара от ЦБ тем же путём, что цены: инструмент `USDRUB` заведён
@@ -128,7 +130,7 @@ export class CryptoPricesService {
     const rate = await this.cbr.usdRub()
     if (!rate) return 0
 
-    return this.store([{ ...rate, instrumentId: pair.id, symbol: pair.symbol }])
+    return this.save([{ ...rate, instrumentId: pair.id, symbol: pair.symbol }])
   }
 
   // История дневных закрытий. Без неё нельзя ни посчитать стоимость портфеля
@@ -152,7 +154,7 @@ export class CryptoPricesService {
         continue
       }
 
-      const written = await this.store(
+      const written = await this.save(
         closes.map((close) => ({ ...close, instrumentId: pair.id, symbol: pair.symbol })),
       )
       saved += written

@@ -3,6 +3,7 @@ import type { OnApplicationBootstrap } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { Interval } from '@nestjs/schedule'
 import type { Env } from '../config/env.ts'
+import { BybitTickerService } from '../connectors/bybit/ticker.service.ts'
 import { CryptoPricesService } from './crypto.service.ts'
 import { PricesService } from './prices.service.ts'
 
@@ -22,6 +23,7 @@ export class PricesScheduler implements OnApplicationBootstrap {
   constructor(
     private readonly prices: PricesService,
     private readonly crypto: CryptoPricesService,
+    private readonly tickers: BybitTickerService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -57,6 +59,12 @@ export class PricesScheduler implements OnApplicationBootstrap {
       // цена меняется чаще, но дневник не торговый терминал.
       const coins = await this.crypto.refresh()
       if (coins.saved > 0) this.log.log(`крипта: сохранено ${coins.saved} из ${coins.seen} пар`)
+
+      // Поток тиков: подписка на пары из справочника. Здесь, а не своим
+      // расписанием, — чтобы живой трафик начинался в одном месте, и тесты,
+      // которые этот модуль не поднимают, не могли открыть сокет к бирже.
+      const streamed = await this.tickers.sync()
+      if (streamed > 0) this.log.debug(`поток цен: подписка на ${streamed} пар`)
 
       // Курс ЦБ в том же цикле, а не по своему расписанию: как часто его
       // спрашивать, решает сам сервис по времени последнего ответа в базе.
