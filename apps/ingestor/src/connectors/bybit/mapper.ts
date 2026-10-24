@@ -1,4 +1,4 @@
-import { Money } from '@thesis/contracts'
+import { feeInQuote } from './fee.ts'
 import type { RawOperation } from '@thesis/contracts'
 
 // Окно истории у Bybit — не больше семи дней: ограничение биржи, не наше.
@@ -42,25 +42,15 @@ export function quoteOf(symbol: string): string {
   return quote
 }
 
-// Комиссия приводится к валюте сделки по цене этой же сделки. Это не оценка и
-// не курс: спот берёт комиссию монетой той же пары в тот же момент, и цена
-// известна из самого исполнения. Решено 23.10.2026.
-//
-// Третья монета (комиссия со скидкой за токен площадки) точному пересчёту не
-// поддаётся, и тогда отказ громкий: лучше не записать сделку, чем записать
-// неверную себестоимость. Запись в docs/unknowns.md.
 export function feeInTradeCurrency(row: Execution, currency: string): string {
-  if (!row.feeCurrency || row.feeCurrency === currency) return row.execFee
-
-  const base = row.symbol.slice(0, -currency.length)
-  if (row.feeCurrency === base) {
-    return Money.of(row.execFee).times(row.execPrice).toString()
-  }
-
-  throw new Error(
-    `комиссия исполнения ${row.execId} взята в ${row.feeCurrency}: ` +
-      `это ни ${base}, ни ${currency} — пересчитать нечем`,
-  )
+  return feeInQuote({
+    fee: row.execFee,
+    feeCurrency: row.feeCurrency,
+    symbol: row.symbol,
+    price: row.execPrice,
+    quote: currency,
+    what: `исполнения ${row.execId}`,
+  })
 }
 
 export function mapExecution(row: Execution): RawOperation {
