@@ -20,7 +20,6 @@ type Pending = {
 type Upload = { importId: string; status: 'uploaded' | 'duplicate' }
 type SkippedRows = {
   derivatives: number
-  newer: number
   withdrawals: number
   unknownFiles: string[]
 }

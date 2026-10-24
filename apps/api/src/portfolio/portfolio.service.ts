@@ -49,6 +49,10 @@ export type PortfolioAccount = {
   // ним завышена на всю стоимость монеты — и это обязано быть видно, иначе
   // число на экране выглядит заработком, которым не является.
   realizedWithoutCost: string
+  // Сколько строк с производными разборщик пропустил по этому счёту. Модели
+  // для них нет, и это решение; но счёт, где торговали фьючерсами, обязан
+  // сказать, что его итог — не про все деньги.
+  derivativeRows: number
 }
 
 // Итог на валюту, а не один на всё: доллар к рублю без курса не прибавить, а
@@ -174,6 +178,19 @@ export class PortfolioService {
         ).map((row) => [row.accountId, row.realized]),
       )
 
+      // Пропущенные производные: число живёт в итоге импорта, потому что
+      // считает их разборщик — он один видит выгрузку целиком.
+      const derivatives = new Map(
+        (
+          await tx.$queryRaw<{ accountId: string; rows: number }[]>`
+            select account_id as "accountId",
+                   sum(coalesce((result -> 'skippedRows' ->> 'derivatives')::int, 0))::int as rows
+              from imports
+             group by account_id
+          `
+        ).map((row) => [row.accountId, row.rows]),
+      )
+
       const prices = new Map(
         (
           await tx.$queryRaw<{ instrumentId: string; price: string; quotedAt: Date }[]>`
@@ -268,6 +285,7 @@ export class PortfolioService {
           totalPnl: realizedOf.plus(unrealizedOf).plus(feesOf).plus(dividendsOf).toString(),
           unpricedPositions: unpriced,
           realizedWithoutCost: Money.of(withoutCost.get(account.accountId) ?? '0').toString(),
+          derivativeRows: derivatives.get(account.accountId) ?? 0,
         }
       })
 

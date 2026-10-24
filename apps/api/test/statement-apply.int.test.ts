@@ -152,7 +152,6 @@ it('итог импорта хранит пропущенное разборщи
 
   await service.apply(seed.userId, seed.importId, [arrival('0.001', '2024-11-16T04:21:48.000Z')], {
     derivatives: 4558,
-    newer: 301,
     withdrawals: 5,
     unknownFiles: [],
   })
@@ -161,7 +160,7 @@ it('итог импорта хранит пропущенное разборщи
   expect(row.result).toMatchObject({
     created: 1,
     arrivals: 1,
-    skippedRows: { derivatives: 4558, newer: 301, withdrawals: 5 },
+    skippedRows: { derivatives: 4558, withdrawals: 5 },
   })
 })
 
@@ -308,4 +307,22 @@ it('приход с ценой даёт лот с себестоимостью, 
   })
   // 0.01 × (100000 − 90000) = 100, а не вся выручка.
   expect(Money.of(position.realizedPnl.toString()).toString()).toBe('100')
+})
+
+// Счёт, где торговали фьючерсами, обязан сказать, что его итог — не про все
+// деньги: на живых данных производные дали 42% убытка, которого журнал не
+// видит вовсе.
+it('счёт показывает, сколько строк с фьючерсами пропущено', async () => {
+  const seed = await seedStatement()
+
+  await service.apply(seed.userId, seed.importId, [arrival('0.001', '2025-09-01T10:00:00.000Z')], {
+    derivatives: 4558,
+    withdrawals: 0,
+    unknownFiles: [],
+  })
+
+  const portfolio = moduleRef.get(PortfolioService)
+  const { accounts } = await portfolio.summary(seed.userId)
+
+  expect(accounts.find((item) => item.accountId === seed.accountId)?.derivativeRows).toBe(4558)
 })

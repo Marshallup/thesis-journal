@@ -53,7 +53,6 @@ export const IMPORT_PARSED_TOPIC = 'import.parsed.v1'
 // числа — правда, которая вводит в заблуждение.
 export type SkippedRows = {
   derivatives: number
-  newer: number
   withdrawals: number
   unknownFiles: string[]
 }
