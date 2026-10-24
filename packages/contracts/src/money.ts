@@ -44,8 +44,20 @@ export class Money {
   gte(x: string | Money): boolean {
     return this.#value.gte(Money.of(x).#value)
   }
+  gt(x: string | Money): boolean {
+    return this.#value.gt(Money.of(x).#value)
+  }
   isNegative(): boolean {
     return this.#value.isNegative()
+  }
+  // Выгрузки биржи записывают расход отрицательной суммой — тем же знаком,
+  // каким деньги ушли со счёта. Количество и цена в журнале положительны
+  // всегда, сторону несёт отдельное поле.
+  abs(): Money {
+    return new Money(this.#value.abs())
+  }
+  negated(): Money {
+    return new Money(this.#value.negated())
   }
   toString(): string {
     return this.#value.toFixed()

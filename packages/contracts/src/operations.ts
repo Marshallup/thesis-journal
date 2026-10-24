@@ -11,7 +11,11 @@ export type CashKind = 'dividend' | 'coupon' | 'tax' | 'deposit' | 'fee'
 export type InstrumentClass = 'equity' | 'bond' | 'etf' | 'crypto' | 'currency'
 
 export type RawOperation = {
-  kind: 'trade' | 'cash'
+  // `arrival` — монета пришла не сделкой: депозит из сети, airdrop, перевод с
+  // другой биржи. Цены покупки у неё нет, и себестоимость неизвестна: решено
+  // 24.10.2026 считать её нулевой и помечать, чтобы завышенная прибыль была
+  // видна, а не спрятана.
+  kind: 'trade' | 'cash' | 'arrival'
   side?: 'buy' | 'sell'
   ticker?: string
   instrumentClass?: InstrumentClass

@@ -58,3 +58,17 @@ describe('Money', () => {
     expect(Money.of('2').plus(Money.of('3')).toString()).toBe('5')
   })
 })
+
+it('gt строго больше, а не больше или равно', () => {
+  expect(Money.of('0.3').gt('0.2')).toBe(true)
+  expect(Money.of('0.3').gt('0.3')).toBe(false)
+  expect(Money.of('-0.1').gt('0')).toBe(false)
+})
+
+// Знак в выгрузках биржи несёт смысл «ушло со счёта», а количество и цена в
+// журнале положительны всегда: сторону несёт отдельное поле.
+it('abs и negated меняют знак, не теряя точности', () => {
+  expect(Money.of('-0.00105400000000000000').abs().toString()).toBe('0.001054')
+  expect(Money.of('146.541009').negated().toString()).toBe('-146.541009')
+  expect(Money.of('-0').abs().toString()).toBe('0')
+})

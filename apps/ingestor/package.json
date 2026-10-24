@@ -18,6 +18,7 @@
     "@thesis/contracts": "workspace:*",
     "@thesis/db": "workspace:*",
     "amqplib": "0.10.9",
+    "fflate": "0.8.3",
     "ioredis": "6.0.0",
     "nestjs-pino": "5.3.1",
     "pino": "10.4.0",
