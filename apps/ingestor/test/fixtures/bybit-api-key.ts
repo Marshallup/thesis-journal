@@ -64,3 +64,11 @@ export const invalidKey = {
   retMsg: 'API key is invalid.',
   result: {},
 }
+
+// Биржа занята: ошибка провайдера, а не наша. Такое повторяется, а не
+// превращается в вердикт по ключу.
+export const busyExchange = {
+  retCode: 10006,
+  retMsg: 'Too many visits!',
+  result: {},
+}

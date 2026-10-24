@@ -12,7 +12,7 @@ import type { ExternalCall } from '../src/outbound/external-call.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
-import { invalidKey, readOnlyKey, tradingKey } from './fixtures/bybit-api-key.ts'
+import { busyExchange, invalidKey, readOnlyKey, tradingKey } from './fixtures/bybit-api-key.ts'
 import type { Env } from '../src/config/env.ts'
 import type { ExchangeKeyChecked, ExchangeKeySave } from '@thesis/contracts'
 import type { RabbitConsumer } from '../src/rabbit/rabbit.consumer.ts'
@@ -181,17 +181,31 @@ it('без MASTER_KEY_FILE команда отбивается с внятной
   )
 })
 
-// Отказ биржи — не отказ навсегда: неверный ключ бывает и следствием того, что
-// биржа ещё не раскатала его по своим узлам. Такое уходит в повтор, а не в
-// отстойник, и ничего не записывает.
-it('отказ биржи оставляет ключ незаписанным и уходит в повтор', async () => {
+// Занятая биржа — не отказ навсегда: такое уходит в повтор, а не в отстойник,
+// и ничего не записывает. Вердикта по ключу здесь тоже нет: мы ещё не знаем
+// его прав.
+it('ошибка провайдера оставляет ключ незаписанным и уходит в повтор', async () => {
   const accountId = randomUUID()
-  answerWith(invalidKey)
+  answerWith(busyExchange)
 
   const failure = keys.save(command('секрет', accountId))
-  await expect(failure).rejects.toThrow(/10003/)
+  await expect(failure).rejects.toThrow(/10006/)
   await expect(failure).rejects.not.toBeInstanceOf(PermanentFailure)
 
   expect(await prisma.exchangeKey.count({ where: { accountId } })).toBe(0)
   expect(await published()).toEqual([])
+})
+
+// Биржа может не принять ключ вовсе — опечатка, истёкший срок, белый список
+// адресов. Без вердикта экран навсегда остался бы на «ждёт проверки».
+it('ключ, который не приняла биржа, становится отклонённым с её причиной', async () => {
+  const accountId = randomUUID()
+  answerWith(invalidKey)
+
+  await keys.save(command('секрет', accountId))
+
+  const [event] = await published()
+  expect(event?.status).toBe('rejected')
+  expect(event?.reason).toContain('10003')
+  expect(await prisma.exchangeKey.count({ where: { accountId } })).toBe(0)
 })

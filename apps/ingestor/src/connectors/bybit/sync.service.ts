@@ -3,22 +3,24 @@ import { Injectable, Logger } from '@nestjs/common'
 import type { OnApplicationBootstrap } from '@nestjs/common'
 import { ACCOUNT_SYNC_QUEUE, IMPORT_PARSED_TOPIC } from '@thesis/contracts'
 import type { AccountSync, ImportParsed, RawOperation } from '@thesis/contracts'
-import { BybitClient } from './client.ts'
+import { BybitClient, isPermanent } from './client.ts'
 import { mapExecution, splitWindows } from './mapper.ts'
 import type { Execution } from './mapper.ts'
 import { KeyVault } from '../../keys/vault.ts'
 import { OutboxRepository } from '../../outbox/outbox.repository.ts'
 import { PrismaService } from '../../db/prisma.service.ts'
 import { ExternalCall } from '../../outbound/external-call.ts'
-import { RabbitConsumer } from '../../rabbit/rabbit.consumer.ts'
+import { PermanentFailure, RabbitConsumer } from '../../rabbit/rabbit.consumer.ts'
 
 // Поток, а не «биржа»: у одной биржи их несколько, и движения денег приедут
 // своим — со своим курсором.
 const STREAM = 'bybit:executions:spot'
 
-// Глубина истории исполнений у Bybit — два года. Просить больше нечего: биржа
-// всё равно ответит пустотой, а окон станет вдвое больше.
-const DEPTH_MS = 2 * 365 * 24 * 60 * 60 * 1000
+// Глубина истории исполнений у Bybit — меньше двух лет, и граница строгая:
+// запрос ровно на два года назад биржа отбивает кодом 10001 «Can't query order
+// earlier than 2 years». Отсюда сутки запаса — их хватает и на високосный год,
+// и на расхождение часов.
+const DEPTH_MS = (2 * 365 - 1) * 24 * 60 * 60 * 1000
 
 // В том же списке биржа отдаёт списания фондирования и ликвидации. Сделка —
 // только `Trade`: остальное в лоты не ложится и приедет движениями денег,
@@ -51,6 +53,20 @@ export class BybitSyncService implements OnApplicationBootstrap {
   }
 
   async run(command: AccountSync): Promise<{ operations: number; windows: number }> {
+    try {
+      return await this.sync(command)
+    } catch (error) {
+      if (!isPermanent(error)) throw error
+
+      // Отказ, который не исправится повтором: про него надо рассказать на
+      // экран, а не молча уехать в отстойник. Экран смотрит на импорты —
+      // значит и отказ приезжает импортом, тем же путём, что успех.
+      await this.reportFailure(command, String(error))
+      throw new PermanentFailure(String(error))
+    }
+  }
+
+  private async sync(command: AccountSync): Promise<{ operations: number; windows: number }> {
     const { apiKeyPublic, secret } = await this.vault.secretFor(command.accountId, command.exchange)
     const client = new BybitClient({ apiKey: apiKeyPublic, secret }, this.calls)
 
@@ -129,6 +145,27 @@ export class BybitSyncService implements OnApplicationBootstrap {
       source: SOURCE,
       fileHash,
       operations,
+    }
+
+    await this.prisma.$transaction((tx) =>
+      this.outbox.enqueue(tx, [
+        { topic: IMPORT_PARSED_TOPIC, key: command.accountId, payload: event },
+      ]),
+    )
+  }
+
+  // Отказ синхронизации виден там же, где её результат: строка импорта со
+  // статусом failed и причиной. Хеш свой у каждой попытки — иначе второй отказ
+  // отбился бы как «ту же выборку уже видели».
+  private async reportFailure(command: AccountSync, reason: string): Promise<void> {
+    const event: ImportParsed = {
+      importId: randomUUID(),
+      accountId: command.accountId,
+      userId: command.userId,
+      source: SOURCE,
+      fileHash: createHash('sha256').update(`отказ:${randomUUID()}`).digest('hex'),
+      operations: [],
+      error: reason,
     }
 
     await this.prisma.$transaction((tx) =>
