@@ -82,6 +82,27 @@ function asTrade(op: RawOperation): TradeOperation {
 // покупка, но по нулевой цене и с пометкой «себестоимость неизвестна». Так
 // продажа такой монеты применяется обычным FIFO, а завышение прибыли видно на
 // экране, а не спрятано. Решено 24.10.2026.
+// Ключ содержимого: счёт уже задан, остальное — то, что делает сделку этой
+// сделкой. Комиссия в ключ не входит: два пути доставки могут посчитать её
+// по-разному, а сделка от этого другой не становится.
+function contentKey(
+  instrumentId: string,
+  side: string,
+  executedAt: string,
+  quantity: string,
+  price: string,
+): string {
+  const second = new Date(executedAt)
+  second.setUTCMilliseconds(0)
+  return [
+    instrumentId,
+    side,
+    second.toISOString(),
+    Money.of(quantity).toString(),
+    Money.of(price).toString(),
+  ].join('|')
+}
+
 function asArrival(op: RawOperation): TradeOperation {
   const { ticker, instrumentClass, quantity } = op
   if (!ticker || !instrumentClass || !quantity) {
@@ -172,17 +193,29 @@ export class ApplyImportService {
 
       // До транзакции: иначе импорт держал бы блокировку на общей таблице.
       const instrumentIds = await this.resolveInstruments(trades)
+
+      // Сверка по содержимому: та же сделка приезжает двумя путями — по API с
+      // `execId` и из выгрузки с ключом, собранным из содержимого строки, — и
+      // ключ идемпотентности `(счёт, провайдер, external_id)` их не связывает.
+      const { fresh, duplicates } = await this.dropKnown(
+        userId,
+        raw.accountId,
+        trades,
+        instrumentIds,
+      )
       const { deferred, postponed } = await this.splitUncoveredSales(
         userId,
         raw.accountId,
         provider,
-        trades,
+        fresh,
         instrumentIds,
       )
 
       const applied: string[] = []
       let created = 0
-      let skipped = 0
+      // Содержимое, уже бывшее в журнале, — это пропущенное: не ошибка и не
+      // потеря, а второй путь доставки той же сделки.
+      let skipped = duplicates
       let arrivals = 0
 
       await this.prisma.withUser(userId, async (tx) => {
@@ -194,7 +227,7 @@ export class ApplyImportService {
         `
         if (!lock?.locked) throw new ImportAlreadyRunning()
 
-        for (const operation of trades) {
+        for (const operation of fresh) {
           if (postponed.has(operation.externalId)) continue
 
           const trade = await this.trades.applyWithin(tx, account, {
@@ -296,6 +329,82 @@ export class ApplyImportService {
       )
       throw error
     }
+  }
+
+  // Отбрасывает то, что в журнале уже есть по содержимому, считая кратность.
+  //
+  // Кратность здесь главное. Биржа дробит заявку на несколько одинаковых
+  // исполнений в одну секунду — у меня в выгрузке нашлась заявка из девяти
+  // частей. Сравнение «есть такая сделка или нет» слило бы их в одну; сравнение
+  // «сколько таких уже записано» пропускает ровно столько, сколько было, и
+  // добавляет разницу.
+  //
+  // Это замена границе по дате, которая стояла здесь раньше: та работала только
+  // при правильном порядке загрузки — сначала ключ, потом файлы. Правильность
+  // денег, зависящая от порядка нажатия кнопок, — это баг, а не инструкция.
+  private async dropKnown(
+    userId: string,
+    accountId: string,
+    trades: TradeOperation[],
+    instrumentIds: Map<string, string>,
+  ): Promise<{ fresh: TradeOperation[]; duplicates: number }> {
+    if (trades.length === 0) return { fresh: [], duplicates: 0 }
+
+    const rows = await this.prisma.withUser(
+      userId,
+      (tx) =>
+        tx.$queryRaw<
+          {
+            instrumentId: string
+            side: string
+            at: Date
+            quantity: string
+            price: string
+            n: number
+          }[]
+        >`
+        select instrument_id as "instrumentId",
+               side,
+               -- До секунды: API отдаёт миллисекунды, выгрузка — секунды, и
+               -- одна и та же сделка иначе не совпадёт сама с собой.
+               date_trunc('second', executed_at) as at,
+               quantity::text,
+               price::text,
+               count(*)::int as n
+          from trades
+         where account_id = ${accountId}::uuid
+         group by 1, 2, 3, 4, 5
+      `,
+    )
+
+    const seen = new Map<string, number>()
+    for (const row of rows) {
+      seen.set(
+        contentKey(row.instrumentId, row.side, row.at.toISOString(), row.quantity, row.price),
+        row.n,
+      )
+    }
+
+    const fresh: TradeOperation[] = []
+    let duplicates = 0
+    for (const operation of trades) {
+      const key = contentKey(
+        instrumentOf(instrumentIds, operation.ticker),
+        operation.side,
+        operation.executedAt,
+        operation.quantity,
+        operation.price,
+      )
+      const left = seen.get(key) ?? 0
+      if (left > 0) {
+        seen.set(key, left - 1)
+        duplicates += 1
+        continue
+      }
+      fresh.push(operation)
+    }
+
+    return { fresh, duplicates }
   }
 
   // Для экрана импорта: что ждёт покупок и из какого отчёта.
