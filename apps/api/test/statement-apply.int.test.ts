@@ -7,7 +7,9 @@ import { DbModule } from '../src/db/db.module.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
 import { PortfolioModule } from '../src/portfolio/portfolio.module.ts'
 import { PortfolioService } from '../src/portfolio/portfolio.service.ts'
+import { TradesService } from '../src/trades/trades.service.ts'
 import { RabbitPublisher } from '../src/rabbit/rabbit.publisher.ts'
+import { TradesModule } from '../src/trades/trades.module.ts'
 import type { RawOperation } from '@thesis/contracts'
 import { withTestDb } from './setup-db.ts'
 
@@ -17,7 +19,7 @@ let service: ApplyImportService
 
 async function createModule() {
   const ref = await Test.createTestingModule({
-    imports: [DbModule, ImportsModule, PortfolioModule],
+    imports: [DbModule, ImportsModule, PortfolioModule, TradesModule],
   })
     .overrideProvider(RabbitPublisher)
     .useValue({ send: () => {} })
@@ -266,4 +268,17 @@ it('порядок загрузки не меняет результат', async
   expect(await db.prisma.trade.count({ where: { accountId: seed.accountId, side: 'sell' } })).toBe(
     1,
   )
+})
+
+// Приход должен быть виден списком как отдельный вид операции: в данных это
+// покупка по нулевой цене, и без пометки экран показывал бы «купил по нулю».
+it('приход отдаётся списком с пометкой, а не как обычная покупка', async () => {
+  const seed = await seedStatement()
+  await service.apply(seed.userId, seed.importId, [arrival('0.002', '2025-07-01T10:00:00.000Z')])
+
+  const trades = moduleRef.get(TradesService)
+  const [listed] = await trades.list(seed.userId, { accountId: seed.accountId })
+
+  expect(listed?.costUnknown).toBe(true)
+  expect(Money.of(listed!.price.toString()).toString()).toBe('0')
 })
