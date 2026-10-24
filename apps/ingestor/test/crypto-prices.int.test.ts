@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { PRICES_TOPIC } from '@thesis/contracts'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { BybitMarket } from '../src/connectors/bybit/market.ts'
+import { CbrClient } from '../src/prices/cbr.client.ts'
 import { CryptoPricesService } from '../src/prices/crypto.service.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PrismaService } from '../src/db/prisma.service.ts'
@@ -18,14 +19,23 @@ const calls = { run: (_provider: string, fn: () => Promise<unknown>) => fn() } a
 // Свой экземпляр на тест: множество «уже спрошенных» пар живёт в памяти
 // сервиса, и общий делал бы тесты зависимыми друг от друга.
 function freshService(): CryptoPricesService {
-  return new CryptoPricesService(prisma, new BybitMarket(calls), new OutboxRepository(prisma))
+  return new CryptoPricesService(
+    prisma,
+    new BybitMarket(calls),
+    new CbrClient(calls),
+    new OutboxRepository(prisma),
+  )
 }
 
 function answer(body: (url: string) => unknown): { urls: string[] } {
   const urls: string[] = []
   globalThis.fetch = vi.fn(async (url: unknown) => {
     urls.push(String(url))
-    return new Response(JSON.stringify(body(String(url))), { status: 200 })
+    const answered = body(String(url))
+    // Строку отдаём как есть: ЦБ отвечает XML, а не JSON.
+    return new Response(typeof answered === 'string' ? answered : JSON.stringify(answered), {
+      status: 200,
+    })
   }) as unknown as typeof fetch
   return { urls }
 }
@@ -169,4 +179,56 @@ it('повторная подгрузка истории ничего не до�
 
   expect(second.saved).toBe(0)
   expect(await prisma.providerPrice.count({ where: { instrumentId: pair.id } })).toBe(2)
+})
+
+// Курс ЦБ идёт тем же путём, что цены: инструмент `USDRUB` заведён миграцией,
+// значение пишется с собственным источником — курс не котировка биржи, и
+// смешивать их в одной колонке значило бы потерять, откуда взято число.
+it('курс доллара сохраняется как цена инструмента USDRUB', async () => {
+  const pair = await db.prisma.instrument.findFirstOrThrow({
+    where: { symbol: 'USDRUB', class: 'currency' },
+  })
+  answer(
+    () =>
+      '<?xml version="1.0"?><ValCurs Date="24.10.2026" name="Foreign Currency Market">' +
+      '<Valute ID="R01235"><NumCode>840</NumCode><CharCode>USD</CharCode>' +
+      '<Nominal>1</Nominal><Name>Доллар США</Name><Value>81,2345</Value></Valute></ValCurs>',
+  )
+
+  const saved = await freshService().refreshRate()
+
+  expect(saved).toBe(1)
+  const [stored] = await prisma.providerPrice.findMany({
+    where: { instrumentId: pair.id },
+    orderBy: { quotedAt: 'desc' },
+    take: 1,
+  })
+  expect(stored?.source).toBe('cbr')
+  expect(stored?.price.toString()).toBe('81.2345')
+  // Курс относится к дню целиком: временем ставится его конец.
+  expect(stored?.quotedAt.toISOString()).toBe('2026-10-24T23:59:59.000Z')
+})
+
+// ЦБ публикует курс раз в сутки, а цикл цен идёт каждые пять минут: без
+// памяти о последнем ответе воркер спрашивал бы одно и то же число 288 раз в
+// день. Память — в базе: перезапуск воркера не повод будить ЦБ.
+it('курс не запрашивается заново, пока свежий', async () => {
+  const xml =
+    '<?xml version="1.0"?><ValCurs Date="24.10.2026">' +
+    '<Valute ID="R01235"><Nominal>1</Nominal><Value>81,2345</Value></Valute></ValCurs>'
+  const pair = await db.prisma.instrument.findFirstOrThrow({
+    where: { symbol: 'USDRUB', class: 'currency' },
+  })
+  // Предыдущий тест уже спросил курс, и его отметка о времени живёт в базе.
+  await db.prisma.providerPrice.deleteMany({ where: { instrumentId: pair.id } })
+
+  const first = answer(() => xml)
+  await freshService().refreshRate()
+  expect(first.urls).toHaveLength(1)
+
+  const second = answer(() => xml)
+  const saved = await freshService().refreshRate()
+
+  expect(saved).toBe(0)
+  expect(second.urls).toEqual([])
 })

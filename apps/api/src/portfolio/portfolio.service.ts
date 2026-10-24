@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { Money } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
+import { type GrandTotal, FX_PAIR, toSingleTotal } from './fx.ts'
 
 export type PortfolioRow = {
   instrumentId: string
@@ -82,6 +83,7 @@ export class PortfolioService {
     rows: PortfolioRow[]
     accounts: PortfolioAccount[]
     byCurrency: PortfolioCurrencyTotal[]
+    grandTotal: GrandTotal
     totals: PortfolioTotals
   }> {
     return this.prisma.withUser(userId, async (tx) => {
@@ -302,9 +304,21 @@ export class PortfolioService {
         if (account.unpricedPositions > 0) incompleteCurrencies.add(account.baseCurrency)
       }
 
+      // Курс доллара — такая же котировка, как цена бумаги: инструмент
+      // `USDRUB` класса `currency`, источник — ЦБ.
+      const [rate] = await tx.$queryRaw<{ value: string; quotedAt: Date }[]>`
+        select price::text as value, quoted_at as "quotedAt"
+          from instrument_prices p
+          join instruments i on i.id = p.instrument_id
+         where i.symbol = ${FX_PAIR} and i.class = 'currency'
+         order by p.quoted_at desc
+         limit 1
+      `
+
       return {
         rows: priced,
         accounts: byAccount,
+        grandTotal: toSingleTotal(perCurrency, rate ?? null, new Date()),
         byCurrency: [...perCurrency].map(([currency, total]) => ({
           currency,
           totalPnl: total.toString(),

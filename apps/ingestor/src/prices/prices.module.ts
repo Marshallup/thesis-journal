@@ -3,6 +3,7 @@ import { DbModule } from '../db/db.module.ts'
 import { OutboundModule } from '../outbound/outbound.module.ts'
 import { OutboxModule } from '../outbox/outbox.module.ts'
 import { MoexClient } from './moex.client.ts'
+import { CbrClient } from './cbr.client.ts'
 import { CryptoPricesService } from './crypto.service.ts'
 import { PricesService } from './prices.service.ts'
 
@@ -11,7 +12,7 @@ import { PricesService } from './prices.service.ts'
 // в живой ISS, потому что в нём некому дёрнуть опрос.
 @Module({
   imports: [DbModule, OutboundModule, OutboxModule],
-  providers: [MoexClient, PricesService, CryptoPricesService],
+  providers: [MoexClient, PricesService, CryptoPricesService, CbrClient],
   exports: [PricesService, CryptoPricesService],
 })
 export class PricesModule {}

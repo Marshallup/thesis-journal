@@ -12,6 +12,9 @@ const BUDGETS = {
   // восстановлением по одному в секунду покрывает и то, и другое.
   moex: { capacity: 10, refillPerSec: 1 },
   bybit: { capacity: 10, refillPerSec: 5 },
+  // Курс ЦБ спрашивается раз в сутки; бюджет здесь — страховка от цикла,
+  // а не от нагрузки.
+  cbr: { capacity: 5, refillPerSec: 1 },
 } satisfies Record<string, Budget>
 
 export type Provider = keyof typeof BUDGETS

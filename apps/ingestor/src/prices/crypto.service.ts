@@ -4,8 +4,15 @@ import type { PriceQuoted } from '@thesis/contracts'
 import { BybitMarket } from '../connectors/bybit/market.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { PrismaService } from '../db/prisma.service.ts'
+import { CbrClient } from './cbr.client.ts'
 
 const SOURCE = 'bybit'
+const RATE_SOURCE = 'cbr'
+const RATE_PAIR = 'USDRUB'
+// Курс публикуется раз в сутки, цикл цен идёт каждые пять минут. Шесть часов —
+// чтобы не ходить в ЦБ 288 раз в день за одним и тем же числом, но успеть
+// подхватить новое в тот же день, когда оно появилось.
+const RATE_EVERY_MS = 6 * 60 * 60 * 1000
 const DAY_MS = 24 * 60 * 60 * 1000
 // Три года дневных закрытий: глубже выгрузка истории сделок всё равно не
 // отдаёт, а оценивать нечего.
@@ -21,6 +28,7 @@ export class CryptoPricesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly market: BybitMarket,
+    private readonly cbr: CbrClient,
     private readonly outbox: OutboxRepository,
   ) {}
 
@@ -33,9 +41,11 @@ export class CryptoPricesService {
 
     return this.prisma.$transaction(async (tx) => {
       const inserted = await tx.providerPrice.createManyAndReturn({
-        data: rows.map(({ instrumentId, price, quotedAt }) => ({
+        data: rows.map(({ instrumentId, symbol, price, quotedAt }) => ({
           instrumentId,
-          source: SOURCE,
+          // У курса ЦБ свой источник: он не котировка биржи, и смешивать их в
+          // одной колонке значило бы потерять, откуда взято число.
+          source: symbol === RATE_PAIR ? RATE_SOURCE : SOURCE,
           price,
           quotedAt,
         })),
@@ -52,7 +62,7 @@ export class CryptoPricesService {
           payload: {
             instrumentId: row.instrumentId,
             symbol: symbols.get(row.instrumentId) ?? '',
-            source: SOURCE,
+            source: symbols.get(row.instrumentId) === RATE_PAIR ? RATE_SOURCE : SOURCE,
             price: row.price.toString(),
             quotedAt: row.quotedAt.toISOString(),
           } satisfies PriceQuoted,
@@ -91,6 +101,34 @@ export class CryptoPricesService {
       }))
 
     return { saved: await this.store(rows), seen: pairs.length }
+  }
+
+  // Курс доллара от ЦБ тем же путём, что цены: инструмент `USDRUB` заведён
+  // миграцией, значение идёт через outbox и проекцию. Отдельной таблицы под
+  // курсы нет — курс это котировка, и всё, что умеет журнал с ценами, умеет и
+  // с ним.
+  async refreshRate(): Promise<number> {
+    const pair = await this.prisma.instrument.findFirst({
+      where: { symbol: RATE_PAIR, class: 'currency' },
+      select: { id: true, symbol: true },
+    })
+    if (!pair) return 0
+
+    // Когда спрашивали в последний раз — из базы, а не из поля объекта:
+    // перезапуск воркера не повод будить ЦБ, а в `--watch` он случается на
+    // каждую правку.
+    const [last] = await this.prisma.providerPrice.findMany({
+      where: { instrumentId: pair.id, source: RATE_SOURCE },
+      orderBy: { fetchedAt: 'desc' },
+      select: { fetchedAt: true },
+      take: 1,
+    })
+    if (last && Date.now() - last.fetchedAt.getTime() < RATE_EVERY_MS) return 0
+
+    const rate = await this.cbr.usdRub()
+    if (!rate) return 0
+
+    return this.store([{ ...rate, instrumentId: pair.id, symbol: pair.symbol }])
   }
 
   // История дневных закрытий. Без неё нельзя ни посчитать стоимость портфеля

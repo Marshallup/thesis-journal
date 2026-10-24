@@ -45,6 +45,13 @@ type PortfolioAccount = {
 }
 
 type CurrencyTotal = { currency: string; totalPnl: string; incomplete: boolean }
+type GrandTotal = {
+  currency: string
+  totalPnl: string
+  rate: { pair: string; value: string; quotedAt: string; stale: boolean } | null
+  unconverted: string[]
+  incomplete: boolean
+}
 
 // Решения без сделок: ровно то, чего не показывает ни один брокер — он знает
 // только совершённое.
@@ -71,7 +78,12 @@ export function TradesPage() {
   })
   const portfolio = useQuery({
     queryKey: ['portfolio'],
-    queryFn: () => api<{ accounts: PortfolioAccount[]; byCurrency: CurrencyTotal[] }>('/portfolio'),
+    queryFn: () =>
+      api<{
+        accounts: PortfolioAccount[]
+        byCurrency: CurrencyTotal[]
+        grandTotal: GrandTotal
+      }>('/portfolio'),
   })
 
   const symbols = new Map(instruments.data?.map((item) => [item.id, item.symbol]))
@@ -95,6 +107,7 @@ export function TradesPage() {
 
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
+  const grandTotal = portfolio.data?.grandTotal
   const unpriced = byAccount.reduce((sum, account) => sum + account.unpricedPositions, 0)
   // Проверка на наличие, а не только на «не ноль»: поля может не быть вовсе,
   // если сервер отвечает версией старше страницы.
@@ -206,8 +219,20 @@ export function TradesPage() {
                   </td>
                 </tr>
               ))}
-              {/* Итог на валюту, а не один на всё: доллар к рублю без курса не
-                  прибавить, а конвертации в проекте пока нет. */}
+              {/* Один итог на всё — то, ради чего журнал и существует. Строки
+                  по валютам остаются: из них видно, что вытягивает, а что
+                  проваливает. */}
+              {grandTotal && byCurrency.length > 1 ? (
+                <tr className="border-t border-rule">
+                  <td className="h-8 font-medium" colSpan={5}>
+                    Итого, {grandTotal.currency}
+                  </td>
+                  <td className="h-8 text-right font-medium">
+                    <Money value={grandTotal.totalPnl} signed />
+                    {grandTotal.incomplete ? <sup>*</sup> : null}
+                  </td>
+                </tr>
+              ) : null}
               {byCurrency.map((total) => (
                 <tr key={total.currency}>
                   <td className="h-8" colSpan={5}>
@@ -229,6 +254,32 @@ export function TradesPage() {
               <Link to="/decisions" className="text-accent">
                 Посмотреть
               </Link>
+            </p>
+          ) : null}
+
+          {grandTotal?.rate && byCurrency.length > 1 ? (
+            // Курс и его дата рядом с суммой, а не в коде: сумма без курса —
+            // это мнение. И допущение про стейблкоин названо вслух.
+            <p className="mt-2 text-sm text-ink-muted">
+              Сложено по курсу ЦБ: 1 USD = <Money value={grandTotal.rate.value} /> ₽ от{' '}
+              {formatMoscowTime(grandTotal.rate.quotedAt).slice(0, 10)}
+              {grandTotal.rate.stale ? ' (курс не обновлялся больше трёх суток)' : null}. USDT
+              принят равным доллару — это стейблкоин, и равен он ему по обещанию эмитента, а не по
+              закону.
+            </p>
+          ) : null}
+
+          {grandTotal?.rate && grandTotal.unconverted.length > 0 ? (
+            <p className="mt-2 text-sm">
+              * В итог не вошли счета в {grandTotal.unconverted.join(', ')}: курса этих валют в
+              системе нет.
+            </p>
+          ) : null}
+
+          {grandTotal && !grandTotal.rate && byCurrency.length > 1 ? (
+            <p className="mt-2 text-sm">
+              * Единого итога нет: курс доллара не загружен, а складывать рубли с долларами без
+              курса нельзя. Строки по валютам выше — всё, что можно утверждать.
             </p>
           ) : null}
 
