@@ -361,3 +361,73 @@ it('с ценой счётчик пуст, а нереализованное п�
   expect(money(account.unrealizedPnl)).toBe('200')
   expect(byCurrency.find((total) => total.currency === 'RUB')?.incomplete).toBe(false)
 })
+
+// Один итог на всё — то, ради чего журнал и существует. Рубли с долларами без
+// курса не складываются, поэтому курс едет вместе с числом.
+it('складывает валюты в один итог по курсу и показывает сам курс', async () => {
+  const { userId, accountId } = await seedAccount(`fx-${randomUUID()}@example.com`)
+  const usdt = await db.prisma.account.create({
+    data: { userId, provider: 'bybit', kind: 'exchange', baseCurrency: 'USDT' },
+  })
+  const instrument = await db.prisma.instrument.create({
+    data: { symbol: `FX${randomUUID().slice(0, 6)}USDT`, class: 'crypto', currency: 'USDT' },
+  })
+  // Сделка в долларах: куплено за 100, продано за 150 — прибыль 50 USDT.
+  await trades.apply(userId, {
+    accountId: usdt.id,
+    instrumentId: instrument.id,
+    side: 'buy',
+    quantity: '1',
+    price: '100',
+    fee: '0',
+    executedAt: '2026-10-01T10:00:00.000Z',
+  })
+  await trades.apply(userId, {
+    accountId: usdt.id,
+    instrumentId: instrument.id,
+    side: 'sell',
+    quantity: '1',
+    price: '150',
+    fee: '0',
+    executedAt: '2026-10-02T10:00:00.000Z',
+  })
+
+  const rate = await db.prisma.instrument.findFirstOrThrow({
+    where: { symbol: 'USDRUB', class: 'currency' },
+  })
+  await db.prisma.instrumentPrice.create({
+    data: {
+      instrumentId: rate.id,
+      source: 'cbr',
+      price: '80',
+      quotedAt: new Date('2026-10-24T23:59:59.000Z'),
+    },
+  })
+
+  const { grandTotal, byCurrency } = await portfolio.summary(userId)
+
+  expect(byCurrency.map((total) => total.currency).toSorted()).toEqual(['RUB', 'USDT'])
+  // 50 USDT × 80 = 4000 ₽ плюс рублёвый итог счёта.
+  const rub = Money.of(byCurrency.find((total) => total.currency === 'RUB')!.totalPnl)
+  expect(money(grandTotal.totalPnl)).toBe(rub.plus('4000').toString())
+  expect(grandTotal).toMatchObject({ currency: 'RUB', rate: { pair: 'USDRUB', value: '80' } })
+  expect(accountId).toBeTruthy()
+})
+
+// Без курса единого итога не существует: ноль здесь был бы враньём, а сумма
+// без пересчёта — смешением рублей с долларами.
+it('без курса единый итог помечен неполным', async () => {
+  const { userId } = await seedAccount(`fx-none-${randomUUID()}@example.com`)
+  await db.prisma.account.create({
+    data: { userId, provider: 'bybit', kind: 'exchange', baseCurrency: 'USDT' },
+  })
+  const rate = await db.prisma.instrument.findFirstOrThrow({
+    where: { symbol: 'USDRUB', class: 'currency' },
+  })
+  await db.prisma.instrumentPrice.deleteMany({ where: { instrumentId: rate.id } })
+
+  const { grandTotal } = await portfolio.summary(userId)
+
+  expect(grandTotal.rate).toBeNull()
+  expect(grandTotal.incomplete).toBe(true)
+})

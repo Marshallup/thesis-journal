@@ -58,6 +58,11 @@ export class PricesScheduler implements OnApplicationBootstrap {
       const coins = await this.crypto.refresh()
       if (coins.saved > 0) this.log.log(`крипта: сохранено ${coins.saved} из ${coins.seen} пар`)
 
+      // Курс ЦБ в том же цикле, а не по своему расписанию: как часто его
+      // спрашивать, решает сам сервис по времени последнего ответа в базе.
+      const rate = await this.crypto.refreshRate()
+      if (rate > 0) this.log.log('курс ЦБ обновлён')
+
       const coinHistory = await this.crypto.backfill()
       if (coinHistory.saved > 0) {
         this.log.log(`крипта: ${coinHistory.saved} дневных цен по ${coinHistory.filled} парам`)
