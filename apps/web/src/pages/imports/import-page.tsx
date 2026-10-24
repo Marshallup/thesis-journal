@@ -113,7 +113,11 @@ export function ImportPage() {
 
   const sberAccounts = accounts.data?.filter((account) => account.provider === 'sber') ?? []
 
-  if (accounts.isSuccess && sberAccounts.length === 0) {
+  // Отложенные продажи приезжают и с биржи, не только из отчёта Сбера. Поэтому
+  // заслонка на весь экран ставится лишь тогда, когда и заливать некуда, и
+  // ждать нечего: иначе человек с одним крипто-счётом не увидит собственных
+  // отложенных операций.
+  if (accounts.isSuccess && sberAccounts.length === 0 && (pending.data?.length ?? 0) === 0) {
     return (
       <main className="mx-auto w-full max-w-xl px-4 py-8">
         <h1 className="font-serif text-xl">Сначала счёт Сбера</h1>
@@ -142,6 +146,13 @@ export function ImportPage() {
         применится, пока в журнале нет покупки. Повторная заливка того же файла безопасна — сделки и
         движения денег не задваиваются.
       </p>
+
+      {sberAccounts.length === 0 ? (
+        <p className="mt-4 text-sm text-ink-muted">
+          Счёта Сбера нет, поэтому заливать отчёт некуда. Отложенные операции ниже приехали с биржи:
+          им нужны покупки, которых в выгрузке не было.
+        </p>
+      ) : null}
 
       <form
         className="mt-8 flex flex-col gap-5"

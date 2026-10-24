@@ -1,11 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common'
 import type { OnApplicationBootstrap } from '@nestjs/common'
 import { IMPORT_PARSE_QUEUE, IMPORT_PARSED_TOPIC } from '@thesis/contracts'
-import type { ImportParse, ImportParsed } from '@thesis/contracts'
+import type { ImportParse, ImportParsed, RawOperation } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { PermanentFailure, RabbitConsumer } from '../rabbit/rabbit.consumer.ts'
 import { parseSberXlsx } from './sber-xlsx.ts'
+
+// Разбор сырья по источнику. У отчёта это XLSX, у синхронизации — уже
+// разобранные операции: коннектор сложил их байтами в то же место, и
+// «разобрать заново» означает перечитать их, а не идти к бирже второй раз.
+const PARSERS = new Map<string, (payload: Buffer) => Promise<RawOperation[]>>([
+  ['sber', parseSberXlsx],
+  ['bybit', readOperations],
+])
+
+// Своё сырьё, а не чужой ввод, но разбирать его всё равно надо проверяя: битый
+// JSON здесь означает, что запись повреждена, и повтор этого не исправит.
+function readOperations(payload: Buffer): Promise<RawOperation[]> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload.toString('utf8'))
+  } catch (error) {
+    throw new PermanentFailure(`сырьё синхронизации не читается: ${String(error)}`)
+  }
+
+  if (!Array.isArray(parsed)) throw new PermanentFailure('сырьё синхронизации — не список операций')
+  return Promise.resolve(parsed as RawOperation[])
+}
 
 @Injectable()
 export class ImportsService implements OnApplicationBootstrap {
@@ -27,14 +49,14 @@ export class ImportsService implements OnApplicationBootstrap {
   async parse(command: ImportParse): Promise<void> {
     const payload = await this.store(command)
 
-    if (command.source !== 'sber') {
+    if (!PARSERS.has(command.source)) {
       const reason = `источник «${command.source}» пока не разбирается`
       await this.reportFailure(command, reason)
       throw new PermanentFailure(reason)
     }
 
     try {
-      const operations = await parseSberXlsx(payload)
+      const operations = await PARSERS.get(command.source)!(payload)
       await this.publish({ ...this.envelope(command), operations })
       this.log.log(`импорт ${command.importId}: операций ${operations.length}`)
     } catch (error) {

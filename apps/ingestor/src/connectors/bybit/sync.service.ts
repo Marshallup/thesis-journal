@@ -131,11 +131,26 @@ export class BybitSyncService implements OnApplicationBootstrap {
       operations,
     }
 
-    await this.prisma.$transaction((tx) =>
-      this.outbox.enqueue(tx, [
+    await this.prisma.$transaction(async (tx) => {
+      // Сырьё остаётся у воркера, как и байты отчёта: без него «разобрать
+      // заново» для синхронизации невозможно — повторный запуск отдаёт тот же
+      // хеш и пропускается, а сходить к бирже за тем же окном дороже и
+      // бессмысленно. Именно это нужно, когда отложенная продажа дождалась
+      // своей покупки.
+      await tx.rawImport.upsert({
+        where: { importId: event.importId },
+        create: {
+          importId: event.importId,
+          source: SOURCE,
+          fileHash,
+          payload: Buffer.from(JSON.stringify(operations)),
+        },
+        update: {},
+      })
+      await this.outbox.enqueue(tx, [
         { topic: IMPORT_PARSED_TOPIC, key: command.accountId, payload: event },
-      ]),
-    )
+      ])
+    })
   }
 
   private async remember(accountId: string, syncedUntil: Date): Promise<void> {
