@@ -3,8 +3,8 @@ import { AuthModule } from '../auth/auth.module.ts'
 import { PortfolioModule } from '../portfolio/portfolio.module.ts'
 import { PortfolioGateway } from './portfolio.gateway.ts'
 
-// Шлюз один, а модуль отдельный: adapter подключается настройкой приложения, и
-// тест, которому сокеты не нужны, этот модуль не поднимает.
+// Шлюз один, а модуль отдельный: так видно, что сокеты зависят от авторизации
+// и портфеля, и ничего больше.
 @Module({
   imports: [AuthModule, PortfolioModule],
   providers: [PortfolioGateway],
