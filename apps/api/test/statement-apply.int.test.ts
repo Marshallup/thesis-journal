@@ -48,9 +48,15 @@ async function seedStatement() {
   return { userId: user.id, accountId: account.id, importId: row.id }
 }
 
-const arrival = (quantity: string, when: string, ticker = 'BTCUSDT'): RawOperation => ({
+const arrival = (
+  quantity: string,
+  when: string,
+  ticker = 'BTCUSDT',
+  price?: string,
+): RawOperation => ({
   kind: 'arrival',
   ticker,
+  ...(price ? { price } : {}),
   instrumentClass: 'crypto',
   quantity,
   currency: 'USDT',
@@ -281,4 +287,25 @@ it('приход отдаётся списком с пометкой, а не к
 
   expect(listed?.costUnknown).toBe(true)
   expect(Money.of(listed!.price.toString()).toString()).toBe('0')
+})
+
+// Цену прихода ставит воркер по рынку на момент зачисления: тогда лот не
+// нулевой, и прибыль при продаже считается от настоящей разницы цен, а не от
+// всей выручки.
+it('приход с ценой даёт лот с себестоимостью, а не нулевой', async () => {
+  const seed = await seedStatement()
+
+  await service.apply(seed.userId, seed.importId, [
+    arrival('0.01', '2025-08-01T10:00:00.000Z', 'BTCUSDT', '90000'),
+    sale('0.01', '100000', '2025-08-15T10:00:00.000Z'),
+  ])
+
+  const lot = await db.prisma.lot.findFirstOrThrow({ where: { accountId: seed.accountId } })
+  expect(Money.of(lot.costOpen.toString()).toString()).toBe('900')
+
+  const position = await db.prisma.position.findFirstOrThrow({
+    where: { accountId: seed.accountId },
+  })
+  // 0.01 × (100000 − 90000) = 100, а не вся выручка.
+  expect(Money.of(position.realizedPnl.toString()).toString()).toBe('100')
 })
