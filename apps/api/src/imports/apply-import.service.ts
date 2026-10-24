@@ -439,10 +439,30 @@ export class ApplyImportService {
   }
 
   // Для экрана импорта: что ждёт покупок и из какого отчёта.
-  pending(userId: string) {
-    return this.prisma.withUser(userId, (tx) =>
+  // Одна и та же продажа приезжает двумя путями — синхронизацией и выгрузкой,
+  // — и если покупок под неё нет, откладывается дважды: сверка по содержимому
+  // работает среди применённых сделок, а отложенная сделкой ещё не стала.
+  //
+  // Деньги это не искажает: при применении дубль отобьётся той же сверкой. Но
+  // человеку показывать одну продажу двумя строками нельзя — читается как
+  // ошибка импорта.
+  async pending(userId: string) {
+    const rows = await this.prisma.withUser(userId, (tx) =>
       tx.deferredOperation.findMany({ orderBy: { occurredAt: 'desc' } }),
     )
+
+    const seen = new Set<string>()
+    return rows.filter((row) => {
+      const key = [
+        row.accountId,
+        row.instrumentId,
+        row.occurredAt.toISOString(),
+        Money.of(row.quantity.toString()).toString(),
+      ].join('|')
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   }
 
   private async resolveInstruments(trades: TradeOperation[]): Promise<Map<string, string>> {

@@ -228,3 +228,32 @@ it('применяет отложенную продажу, когда поку�
 
 // Гоночный тест живёт в import-concurrency.int.test.ts — там же, где сама
 // блокировка.
+
+// Одна продажа, приехавшая двумя путями, откладывается дважды: сверка по
+// содержимому работает среди применённых сделок, а отложенная сделкой ещё не
+// стала. Деньги это не искажает, но показывать её человеку двумя строками
+// нельзя — читается как ошибка импорта.
+it('одна отложенная продажа не показывается дважды', async () => {
+  const { userId, accountId } = await seedAccount(`deferred-twice-${randomUUID()}@example.com`)
+  const first = await seedImport(accountId)
+  const second = await seedImport(accountId)
+  const sale = {
+    kind: 'trade' as const,
+    side: 'sell' as const,
+    ticker: 'SBER',
+    instrumentClass: 'equity' as const,
+    quantity: '10',
+    price: '300',
+    fee: '0',
+    currency: 'RUB',
+    executedAt: '2026-05-01T10:00:00.000Z',
+    externalId: 'from-report',
+  }
+
+  // Покупок под неё нет ни в одном импорте: оба откладывают её целиком.
+  await service.apply(userId, first, [sale])
+  await service.apply(userId, second, [{ ...sale, externalId: 'from-sync' }])
+
+  const pending = await service.pending(userId)
+  expect(pending.filter((row) => row.externalId.startsWith('from-'))).toHaveLength(1)
+})
