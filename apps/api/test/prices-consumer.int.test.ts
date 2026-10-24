@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { ConfigService } from '@nestjs/config'
+import { EventEmitter2 } from '@nestjs/event-emitter'
 import { Money } from '@thesis/contracts'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { PrismaService } from '../src/db/prisma.service.ts'
@@ -44,7 +45,9 @@ beforeAll(async () => {
   process.env.APP_DATABASE_URL = db.appUrl
   prisma = new PrismaService()
   await prisma.$connect()
-  consumer = new PricesConsumer(prisma, configStub)
+  // Настоящий эмиттер, а не заглушка: слушателей в этом тесте нет, и объявить
+  // событие в пустоту — ровно то, что делает консьюмер без шлюза.
+  consumer = new PricesConsumer(prisma, configStub, new EventEmitter2())
   prices = new PricesService(prisma)
 })
 

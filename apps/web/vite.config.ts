@@ -16,6 +16,12 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // Дефолт — чтобы свежий клон поднимался без копирования шаблона.
         '/api': env.API_PROXY_TARGET || 'http://localhost:3000',
+        // Сокет живого итога: без ws: true dev-сервер отвечает на рукопожатие
+        // обычным запросом, и соединение не открывается вовсе.
+        '/ws': {
+          target: env.API_PROXY_TARGET || 'http://localhost:3000',
+          ws: true,
+        },
       },
     },
   }

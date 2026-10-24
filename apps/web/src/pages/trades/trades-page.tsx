@@ -5,7 +5,8 @@ import { api } from '../../shared/api/client.ts'
 import { useSession } from '../../shared/api/session.tsx'
 import { accountLabel } from '../../shared/ui/account-label.ts'
 import type { LabelledAccount } from '../../shared/ui/account-label.ts'
-import { formatMoscowTime } from '../../shared/ui/format.ts'
+import { formatMoscowClock, formatMoscowTime } from '../../shared/ui/format.ts'
+import { useLivePortfolio } from '../../features/live-portfolio/use-live-portfolio.ts'
 import { Money } from '../../shared/ui/money.tsx'
 
 type Trade = {
@@ -108,6 +109,13 @@ export function TradesPage() {
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
   const grandTotal = portfolio.data?.grandTotal
+  // Живой итог заменяет снимок только там, где значит ровно то же: единый итог
+  // по всему портфелю в той же валюте.
+  const live = useLivePortfolio(portfolio.isSuccess)
+  const liveTotal = live && live.currency === grandTotal?.currency ? live : null
+  // В строку по валюте живое число годится, только когда валюта одна: иначе в
+  // «Итого, RUB» попало бы ещё и пересчитанное долларовое.
+  const singleCurrency = byCurrency.length === 1 && byCurrency[0]?.currency === grandTotal?.currency
   const unpriced = byAccount.reduce((sum, account) => sum + account.unpricedPositions, 0)
   // Проверка на наличие, а не только на «не ноль»: поля может не быть вовсе,
   // если сервер отвечает версией старше страницы.
@@ -228,7 +236,7 @@ export function TradesPage() {
                     Итого, {grandTotal.currency}
                   </td>
                   <td className="h-8 text-right font-medium">
-                    <Money value={grandTotal.totalPnl} signed />
+                    <Money value={liveTotal?.total ?? grandTotal.totalPnl} signed />
                     {grandTotal.incomplete ? <sup>*</sup> : null}
                   </td>
                 </tr>
@@ -239,13 +247,24 @@ export function TradesPage() {
                     Итого, {total.currency}
                   </td>
                   <td className="h-8 text-right">
-                    <Money value={total.totalPnl} signed />
+                    <Money
+                      value={singleCurrency && liveTotal ? liveTotal.total : total.totalPnl}
+                      signed
+                    />
                     {total.incomplete ? <sup>*</sup> : null}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {liveTotal ? (
+            // Видно, что число живое и когда оно таким стало: иначе «обновляется
+            // вживую» — обещание, проверить которое нечем.
+            <p className="mt-2 text-sm text-ink-muted">
+              Итог обновляется вживую: последний пересчёт в {formatMoscowClock(liveTotal.ts)}.
+            </p>
+          ) : null}
 
           {idle > 0 ? (
             <p className="mt-2 text-sm">

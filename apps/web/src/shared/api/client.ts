@@ -39,6 +39,12 @@ export function setAccessToken(token: string | null): void {
   accessToken = token
 }
 
+// Нужен сокету: заголовков у рукопожатия WebSocket нет, и токен уходит первым
+// сообщением уже открытого соединения.
+export function getAccessToken(): string | null {
+  return accessToken
+}
+
 // Один общий запрос на всех: ротация списывает refresh первым обращением,
 // и второй параллельный получит 401, затерев токен первого.
 let inFlight: Promise<boolean> | null = null

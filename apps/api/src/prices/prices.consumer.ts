@@ -4,7 +4,9 @@ import { ConfigService } from '@nestjs/config'
 import { KafkaJS } from '@confluentinc/kafka-javascript'
 import { PRICES_TOPIC } from '@thesis/contracts'
 import type { PriceQuoted } from '@thesis/contracts'
+import { EventEmitter2 } from '@nestjs/event-emitter'
 import { ensureTopics } from './kafka.topics.ts'
+import { PRICE_APPLIED } from './price-applied.event.ts'
 import { PrismaService } from '../db/prisma.service.ts'
 import type { Env } from '../config/env.ts'
 
@@ -25,6 +27,7 @@ export class PricesConsumer implements OnApplicationBootstrap, OnApplicationShut
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService<Env, true>,
+    private readonly events: EventEmitter2,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -81,15 +84,18 @@ export class PricesConsumer implements OnApplicationBootstrap, OnApplicationShut
   //
   // Публичный, потому что его зовёт тест: брокер в тестах не поднимается, а
   // проверять надо именно эту транзакцию — в ней вся идемпотентность.
-  async apply(eventId: string, event: PriceQuoted): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+  //
+  // Возвращает, применилось ли событие: повторная доставка не должна будить
+  // шлюз сокетов — цена от неё не изменилась.
+  async apply(eventId: string, event: PriceQuoted): Promise<boolean> {
+    const applied = await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.$queryRaw<{ id: string }[]>`
         insert into processed_messages (consumer, event_id)
         values (${CONSUMER}, ${eventId}::uuid)
         on conflict (consumer, event_id) do nothing
         returning id
       `
-      if (claimed.length === 0) return
+      if (claimed.length === 0) return false
 
       // Проекция. ON CONFLICT по тому же ключу, что у источника: опоздавшее
       // или повторное событие ничего не затирает.
@@ -103,7 +109,13 @@ export class PricesConsumer implements OnApplicationBootstrap, OnApplicationShut
         )
         on conflict (instrument_id, source, quoted_at) do nothing
       `
+      return true
     })
+
+    // После транзакции, а не внутри: слушатель увидит цену в базе, а не
+    // догонит ещё не закрытую транзакцию.
+    if (applied) this.events.emit(PRICE_APPLIED, event)
+    return applied
   }
 
   async onApplicationShutdown(): Promise<void> {

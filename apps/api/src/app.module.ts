@@ -3,6 +3,7 @@ import { Module, StandardSchemaValidationPipe } from '@nestjs/common'
 import type { MiddlewareConsumer, NestModule } from '@nestjs/common'
 import { ConfigModule, ConfigService } from '@nestjs/config'
 import { APP_PIPE } from '@nestjs/core'
+import { EventEmitterModule } from '@nestjs/event-emitter'
 import cookieParser from 'cookie-parser'
 import { LoggerModule } from 'nestjs-pino'
 import { AccountsModule } from './accounts/accounts.module.ts'
@@ -22,6 +23,7 @@ import { PricesConsumerModule } from './prices/prices-consumer.module.ts'
 import { PricesModule } from './prices/prices.module.ts'
 import { SyncModule } from './sync/sync.module.ts'
 import { TradesModule } from './trades/trades.module.ts'
+import { WsModule } from './ws/ws.module.ts'
 
 @Module({
   imports: [
@@ -82,6 +84,10 @@ import { TradesModule } from './trades/trades.module.ts'
     AuthModule,
     HealthModule,
     TradesModule,
+    WsModule,
+    // События внутри процесса: консьюмер цен объявляет «цена применена», шлюз
+    // сокетов слушает. Прямой вызов связал бы запись с доставкой.
+    EventEmitterModule.forRoot(),
     DecisionsModule,
     InstrumentsModule,
     AccountsModule,
