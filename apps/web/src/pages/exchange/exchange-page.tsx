@@ -29,8 +29,12 @@ type ImportRow = {
 // и честнее сказать это прямо, чем крутить спиннер.
 const CHECK_MS = 20_000
 // Синхронизация за два года — это сотня окон, и приезжают они по одному
-// импорту. Минута ожидания, дальше экран предлагает обновить список сам.
-const SYNC_MS = 60_000
+// импорту. Три минуты потолка: дальше экран говорит, что работа продолжается
+// в фоне, и показывает, что успело приехать.
+const SYNC_MS = 180_000
+// Сколько тишины считать концом работы: окна идут подряд, и пауза между ними
+// короче секунды даже с ограничителем.
+const QUIET_MS = 8_000
 const POLL_MS = 1000
 
 const STATUS: Record<KeyState['status'], string> = {
@@ -57,16 +61,48 @@ async function waitForCheck(accountId: string): Promise<KeysView> {
 
 // Ждём, пока появится хотя бы один завершённый импорт свежее отсечки: иначе
 // «синхронизировано» показывалось бы раньше, чем что-то приехало.
-async function waitForSync(accountId: string, since: number): Promise<ImportRow[]> {
+// Синхронизация идёт неделями: воркер создаёт импорт на каждое окно, где были
+// сделки, и они приезжают по одному. Поэтому ждём не «появилась первая
+// строка», а «строки перестали появляться»: прежняя проверка объявляла дело
+// сделанным после первого окна, а остальные приезжали молча, и экран выглядел
+// сломанным.
+async function waitForSync(
+  accountId: string,
+  since: number,
+  onProgress: (rows: ImportRow[]) => void,
+): Promise<ImportRow[]> {
   const until = Date.now() + SYNC_MS
+  let fresh: ImportRow[] = []
+  let lastChange = Date.now()
+
   for (;;) {
     const rows = await api<ImportRow[]>(`/imports?accountId=${accountId}`)
-    const fresh = rows.filter((row) => Date.parse(row.createdAt) >= since)
+    const now = rows.filter((row) => Date.parse(row.createdAt) >= since)
+    if (now.length !== fresh.length) {
+      lastChange = Date.now()
+      fresh = now
+      // Экран показывает строки по мере появления: иначе человек видит
+      // замерший спиннер и не понимает, работает ли что-нибудь.
+      onProgress(fresh)
+    }
+
     const settled = fresh.every((row) => row.status === 'parsed' || row.status === 'failed')
-    if (fresh.length > 0 && settled) return fresh
+    // Тишина дольше QUIET_MS при разобранных строках — значит воркер дошёл до
+    // конца: окна идут одно за другим, пауза между ними короче секунды.
+    if (fresh.length > 0 && settled && Date.now() - lastChange > QUIET_MS) return fresh
     if (Date.now() > until) return fresh
     await sleep(POLL_MS)
   }
+}
+
+// Итог по списку импортов: сколько сделок записано и сколько отложено. Без
+// этих чисел экран говорит «готово» и не говорит, что именно случилось.
+function countTrades(rows: ImportRow[]): number {
+  return rows.reduce((sum, row) => sum + (row.result?.created ?? 0), 0)
+}
+
+function countDeferred(rows: ImportRow[]): number {
+  return rows.reduce((sum, row) => sum + (row.result?.deferred ?? 0), 0)
 }
 
 function explain(error: unknown): string {
@@ -111,11 +147,22 @@ export function ExchangePage() {
     },
   })
 
+  // Что уже приехало, пока идёт синхронизация. Держится отдельно от мутации:
+  // react-query отдаёт результат только по завершении, а человеку нужно видеть
+  // работу по ходу.
+  const [progress, setProgress] = useState<ImportRow[]>([])
+
   const sync = useMutation<ImportRow[]>({
     mutationFn: async () => {
       const since = Date.now()
+      setProgress([])
       await api(`/accounts/${accountId}/sync`, { method: 'POST', body: JSON.stringify({}) })
-      return waitForSync(accountId, since)
+      return waitForSync(accountId, since, (rows) => {
+        setProgress(rows)
+        // Список импортов обновляется по ходу, а не в конце: строки должны
+        // появляться на глазах.
+        void queryClient.invalidateQueries({ queryKey: ['imports', accountId] })
+      })
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['imports', accountId] })
@@ -297,15 +344,43 @@ export function ExchangePage() {
             </button>
             {sync.isPending ? (
               <span className="text-sm text-ink-muted">
-                Воркер идёт на биржу окнами по семь дней. Это может занять минуту.
+                Воркер идёт на биржу окнами по семь дней, по импорту на окно со сделками.{' '}
+                {progress.length > 0
+                  ? `Уже приехало: ${progress.length}, сделок ${countTrades(progress)}.`
+                  : 'Первые строки появятся через несколько секунд.'}
               </span>
             ) : null}
             {sync.isError ? <span className="text-sm text-loss">{explain(sync.error)}</span> : null}
           </div>
 
-          {sync.isSuccess && sync.data.length === 0 ? (
-            <p className="mt-4 text-sm text-ink-muted">
-              Новых сделок нет: биржа отдала то же, что в прошлый раз.
+          {sync.isSuccess ? (
+            <p className="mt-4 text-sm">
+              {sync.data.length === 0 ? (
+                'Новых сделок нет: биржа отдала то же, что в прошлый раз.'
+              ) : (
+                <>
+                  Синхронизация закончилась: импортов{' '}
+                  <span className="tabular">{sync.data.length}</span>, сделок записано{' '}
+                  <span className="tabular">{countTrades(sync.data)}</span>
+                  {countDeferred(sync.data) > 0 ? (
+                    <>
+                      , отложено до появления покупок{' '}
+                      <span className="tabular">{countDeferred(sync.data)}</span>
+                    </>
+                  ) : null}
+                  .
+                </>
+              )}
+            </p>
+          ) : null}
+
+          {sync.isSuccess && sync.data.length > 0 ? (
+            // Воркер мог не успеть за время ожидания: окон бывает сотня.
+            // Сказать об этом честнее, чем оставить человека гадать, почему
+            // строки продолжают появляться после «готово».
+            <p className="mt-1 text-xs text-ink-muted">
+              Если строки продолжают появляться — воркер ещё идёт по окнам. Обновите страницу через
+              минуту: импорты дописываются сами, повторно запускать не нужно.
             </p>
           ) : null}
 
