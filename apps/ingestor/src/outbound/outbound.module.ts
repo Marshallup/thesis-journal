@@ -5,6 +5,7 @@ import { CircuitBreaker } from './circuit-breaker.ts'
 import { ExternalCall } from './external-call.ts'
 import { RateLimiter } from './rate-limiter.ts'
 import { BybitMarket } from '../connectors/bybit/market.ts'
+import { BybitWsClient, socketProvider } from '../connectors/bybit/ws-client.ts'
 import { REDIS, redisProvider } from './redis.ts'
 
 // Соединение закрывается по SIGTERM вместе со всем остальным: правило проекта
@@ -30,7 +31,9 @@ class RedisLifecycle implements OnApplicationShutdown {
     ExternalCall,
     RedisLifecycle,
     BybitMarket,
+    socketProvider,
+    BybitWsClient,
   ],
-  exports: [ExternalCall, BybitMarket],
+  exports: [ExternalCall, BybitMarket, BybitWsClient],
 })
 export class OutboundModule {}
