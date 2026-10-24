@@ -32,12 +32,13 @@ type PortfolioAccount = {
   createdAt: string
   realizedPnl: string
   unrealizedPnl: string
+  unpricedPositions: number
   fees: string
   dividends: string
   totalPnl: string
 }
 
-type CurrencyTotal = { currency: string; totalPnl: string }
+type CurrencyTotal = { currency: string; totalPnl: string; incomplete: boolean }
 
 // Решения без сделок: ровно то, чего не показывает ни один брокер — он знает
 // только совершённое.
@@ -88,6 +89,7 @@ export function TradesPage() {
 
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
+  const unpriced = byAccount.reduce((sum, account) => sum + account.unpricedPositions, 0)
   // Подпись безымянного счёта уточняется только на фоне остальных.
   const labels = byAccount.map((account) => ({ ...account, id: account.accountId }))
   const hasPaper = byAccount.some((account) => account.kind === 'paper')
@@ -164,8 +166,18 @@ export function TradesPage() {
                   <td className="h-8 text-right">
                     <Money value={account.realizedPnl} signed />
                   </td>
+                  {/* Прочерк, а не ноль: если ни по одной открытой позиции нет
+                      цены, нереализованного не «нисколько» — оно неизвестно.
+                      Звёздочка там, где цена есть лишь по части бумаг. */}
                   <td className="h-8 text-right">
-                    <Money value={account.unrealizedPnl} signed />
+                    {account.unpricedPositions > 0 && account.unrealizedPnl === '0' ? (
+                      <span title="нет цен по открытым позициям">—</span>
+                    ) : (
+                      <>
+                        <Money value={account.unrealizedPnl} signed />
+                        {account.unpricedPositions > 0 ? <sup>*</sup> : null}
+                      </>
+                    )}
                   </td>
                   <td className="h-8 text-right">
                     <Money value={account.fees} signed />
@@ -175,6 +187,7 @@ export function TradesPage() {
                   </td>
                   <td className="h-8 text-right">
                     <Money value={account.totalPnl} signed />
+                    {account.unpricedPositions > 0 ? <sup>*</sup> : null}
                   </td>
                 </tr>
               ))}
@@ -187,6 +200,7 @@ export function TradesPage() {
                   </td>
                   <td className="h-8 text-right">
                     <Money value={total.totalPnl} signed />
+                    {total.incomplete ? <sup>*</sup> : null}
                   </td>
                 </tr>
               ))}
@@ -205,7 +219,11 @@ export function TradesPage() {
 
           <p className="mt-2 text-xs text-ink-muted">
             Взносы в итог не входят: это принесённые деньги, а не заработок. Нереализованное
-            считается по последним котировкам, бумага без цены в него не входит.
+            считается по последним котировкам.
+            {unpriced > 0
+              ? ` * Открытых позиций без цены: ${unpriced}. Котировки есть только по бумагам MOEX,
+                 поэтому крипта в нереализованное и в итог пока не входит, а не равна нулю.`
+              : ' Бумага без цены в него не входит.'}
             {hasPaper ? ' Бумажные счета помечены и в итог не входят.' : ''}{' '}
             <Link to="/portfolio" className="text-accent">
               Разбор по бумагам
