@@ -326,3 +326,59 @@ it('счёт показывает, сколько строк с фьючерса
 
   expect(accounts.find((item) => item.accountId === seed.accountId)?.derivativeRows).toBe(4558)
 })
+
+// Вывод монеты — выбытие: лоты списываются, как при продаже, и результат
+// признаётся за время, что монета была на счёте. Без этого она остаётся в
+// портфеле навсегда, а остаток не сходится с биржей.
+it('вывод монеты списывает лоты и признаёт результат', async () => {
+  const seed = await seedStatement()
+
+  await service.apply(seed.userId, seed.importId, [
+    arrival('0.01', '2025-10-01T10:00:00.000Z', 'BTCUSDT', '90000'),
+    {
+      kind: 'disposal',
+      ticker: 'BTCUSDT',
+      instrumentClass: 'crypto',
+      quantity: '0.01',
+      price: '95000',
+      currency: 'USDT',
+      executedAt: '2025-10-10T10:00:00.000Z',
+      externalId: 'withdraw-one',
+    },
+  ])
+
+  const position = await db.prisma.position.findFirstOrThrow({
+    where: { accountId: seed.accountId },
+  })
+  // Монеты на счёте больше нет, а разница цен признана: 0.01 × (95000 − 90000).
+  expect(Money.of(position.quantity.toString()).toString()).toBe('0')
+  expect(Money.of(position.realizedPnl.toString()).toString()).toBe('50')
+
+  const listed = await moduleRef.get(TradesService).list(seed.userId, { accountId: seed.accountId })
+  expect(listed.find((trade) => trade.side === 'sell')?.costUnknown).toBe(true)
+})
+
+// Цены нет — списываем по нулю: убыток на всю себестоимость. Допущение, но
+// оставить монету в портфеле — допущение хуже: оно утверждает, что она есть.
+it('вывод без цены списывает монету в убыток целиком', async () => {
+  const seed = await seedStatement()
+
+  await service.apply(seed.userId, seed.importId, [
+    arrival('100', '2025-11-01T10:00:00.000Z', 'SCAUSDT', '5'),
+    {
+      kind: 'disposal',
+      ticker: 'SCAUSDT',
+      instrumentClass: 'crypto',
+      quantity: '100',
+      currency: 'USDT',
+      executedAt: '2025-11-20T10:00:00.000Z',
+      externalId: 'withdraw-two',
+    },
+  ])
+
+  const position = await db.prisma.position.findFirstOrThrow({
+    where: { accountId: seed.accountId },
+  })
+  expect(Money.of(position.quantity.toString()).toString()).toBe('0')
+  expect(Money.of(position.realizedPnl.toString()).toString()).toBe('-500')
+})

@@ -103,6 +103,32 @@ function contentKey(
   ].join('|')
 }
 
+// Вывод монеты — это продажа по оценённой цене: лоты списываются по FIFO, и
+// результат признаётся за время, что монета была на счёте. Без этого она
+// осталась бы в портфеле навсегда, а остаток не сошёлся бы с биржей.
+//
+// Цены нет — списываем по нулю: это признаёт убыток на всю себестоимость, и
+// да, это допущение. Но оставить монету в портфеле — допущение хуже: оно
+// утверждает, что она у тебя есть.
+function asDisposal(op: RawOperation): TradeOperation {
+  const { ticker, instrumentClass, quantity } = op
+  if (!ticker || !instrumentClass || !quantity) {
+    throw new Error(`выбытие ${op.externalId}: разборщик не заполнил обязательные поля`)
+  }
+  return {
+    side: 'sell',
+    ticker,
+    instrumentClass,
+    quantity,
+    price: op.price ?? '0',
+    fee: '0',
+    currency: op.currency,
+    executedAt: op.executedAt,
+    externalId: op.externalId,
+    costUnknown: true,
+  }
+}
+
 function asArrival(op: RawOperation): TradeOperation {
   const { ticker, instrumentClass, quantity } = op
   if (!ticker || !instrumentClass || !quantity) {
@@ -185,6 +211,7 @@ export class ApplyImportService {
       const trades = inOrder([
         ...operations.filter((op) => op.kind === 'trade').map(asTrade),
         ...operations.filter((op) => op.kind === 'arrival').map(asArrival),
+        ...operations.filter((op) => op.kind === 'disposal').map(asDisposal),
       ])
       const cash = inOrder(operations.filter((op) => op.kind === 'cash').map(asCash))
 
@@ -249,7 +276,9 @@ export class ApplyImportService {
             continue
           }
           created += 1
-          if (operation.costUnknown) arrivals += 1
+          // Счётчик именно приходов: выбытие помечено тем же флагом «цена
+          // оценена», но прибавляет оно не монеты, а наоборот.
+          if (operation.costUnknown && operation.side === 'buy') arrivals += 1
           applied.push(trade.id)
         }
 
