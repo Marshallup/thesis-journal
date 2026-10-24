@@ -22,5 +22,8 @@ import { JwtStrategy } from './jwt.strategy.ts'
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
+  // JwtModule наружу: шлюз сокетов проверяет тот же access-токен тем же
+  // секретом, и второй настройки у него быть не должно.
+  exports: [JwtModule],
 })
 export class AuthModule {}

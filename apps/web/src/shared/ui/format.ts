@@ -53,6 +53,18 @@ export function formatMoscowTime(iso: string): string {
   return moscow.format(new Date(iso))
 }
 
+// Часы с секундами: по живому итогу должно быть видно, что он живой.
+const moscowClock = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+})
+
+export function formatMoscowClock(iso: string): string {
+  return moscowClock.format(new Date(iso))
+}
+
 // График хранит время числом секунд, а не строкой ISO.
 export function formatMoscowMoment(at: Date): string {
   return moscow.format(at)

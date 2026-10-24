@@ -49,6 +49,9 @@ it('отвечает 503, когда база недоступна', async () =>
     })
     .compile()
   const broken = moduleRef.createNestApplication()
+  // Та же настройка, что в bootstrap, обязательна с появлением шлюза сокетов:
+  // без неё Nest ищет адаптер socket.io, не находит и выходит из процесса.
+  configureApp(broken)
   await broken.init()
 
   const res = await request(broken.getHttpServer()).get('/health')
