@@ -42,11 +42,25 @@ export type ImportParse = {
   // Байты отчёта в base64 — при первой отправке. При повторном разборе их нет:
   // сырьё уже лежит у воркера, и гонять файл второй раз незачем.
   payloadBase64?: string
+  // Граница по дате для выгрузки из кабинета: всё, что новее, уже приехало по
+  // API со своим идентификатором исполнения. Считает её `api` — только он
+  // видит свои сделки; воркеру в `public.trades` ходить нечем.
+  cutoff?: string
 }
 
 // Событие: «отчёт разобран». Kafka, потому что это факт, и потребителей у него
 // со временем станет больше одного.
 export const IMPORT_PARSED_TOPIC = 'import.parsed.v1'
+
+// Что разборщик не взял и почему. Не для лога, а для экрана: в иной год
+// производные делают весь результат, и «импортировано 23 сделки» без этого
+// числа — правда, которая вводит в заблуждение.
+export type SkippedRows = {
+  derivatives: number
+  newer: number
+  withdrawals: number
+  unknownFiles: string[]
+}
 
 export type ImportParsed = {
   importId: string
@@ -61,6 +75,7 @@ export type ImportParsed = {
   // потребитель один и тот же, и ему важно не «что случилось», а «что теперь
   // с этим импортом».
   operations: RawOperation[]
+  skipped?: SkippedRows
   error?: string
 }
 

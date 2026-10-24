@@ -1,6 +1,6 @@
 import { ConflictException, Injectable } from '@nestjs/common'
 import { Money } from '@thesis/contracts'
-import type { InstrumentClass, RawOperation } from '@thesis/contracts'
+import type { InstrumentClass, RawOperation, SkippedRows } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
 import { MatchingService } from '../decisions/matching.service.ts'
 import { InstrumentsService } from '../instruments/instruments.service.ts'
@@ -16,7 +16,15 @@ type DeferredRow = DeferredSale & {
   externalId: string
   occurredAt: string
 }
-export type ImportResult = { created: number; skipped: number; deferred: DeferredSale[] }
+export type ImportResult = {
+  created: number
+  skipped: number
+  deferred: DeferredSale[]
+  // Приходы монет, записанные с нулевой себестоимостью: их надо показать
+  // отдельно от покупок, иначе «создано 29» прячет, что часть из них — монеты
+  // без цены.
+  arrivals: number
+}
 
 // Отдельный тип: в catch проигравшего гонку надо отличить от настоящей
 // неудачи, иначе отчёт победителя пометится как провалившийся.
@@ -32,6 +40,7 @@ const ZERO = Money.of('0')
 // Сужаем один раз, чтобы дальше не было восклицательных знаков.
 type TradeOperation = {
   side: 'buy' | 'sell'
+  costUnknown?: boolean
   ticker: string
   instrumentClass: InstrumentClass
   quantity: string
@@ -66,6 +75,29 @@ function asTrade(op: RawOperation): TradeOperation {
     currency: op.currency,
     executedAt: op.executedAt,
     externalId: op.externalId,
+  }
+}
+
+// Приход монеты не сделкой — депозит, airdrop, перевод извне — это та же
+// покупка, но по нулевой цене и с пометкой «себестоимость неизвестна». Так
+// продажа такой монеты применяется обычным FIFO, а завышение прибыли видно на
+// экране, а не спрятано. Решено 24.10.2026.
+function asArrival(op: RawOperation): TradeOperation {
+  const { ticker, instrumentClass, quantity } = op
+  if (!ticker || !instrumentClass || !quantity) {
+    throw new Error(`приход ${op.externalId}: разборщик не заполнил обязательные поля`)
+  }
+  return {
+    side: 'buy',
+    ticker,
+    instrumentClass,
+    quantity,
+    price: '0',
+    fee: '0',
+    currency: op.currency,
+    executedAt: op.executedAt,
+    externalId: op.externalId,
+    costUnknown: true,
   }
 }
 
@@ -110,7 +142,12 @@ export class ApplyImportService {
 
   // Операции приходят аргументом: разбирает их воркер, а это применение.
   // userId обязателен — без него RLS не покажет ни импорт, ни счёт.
-  async apply(userId: string, importId: string, operations: RawOperation[]): Promise<ImportResult> {
+  async apply(
+    userId: string,
+    importId: string,
+    operations: RawOperation[],
+    skippedRows?: SkippedRows,
+  ): Promise<ImportResult> {
     const { raw, account } = await this.prisma.withUser(userId, async (tx) => {
       const found = await tx.import.findUniqueOrThrow({ where: { id: importId } })
       return {
@@ -120,15 +157,25 @@ export class ApplyImportService {
     })
 
     try {
-      const trades = inOrder(operations.filter((op) => op.kind === 'trade').map(asTrade))
+      // Приходы идут в общий список со сделками и в хронологическом порядке:
+      // FIFO должен увидеть лот прихода раньше продажи, которая его съедает.
+      const trades = inOrder([
+        ...operations.filter((op) => op.kind === 'trade').map(asTrade),
+        ...operations.filter((op) => op.kind === 'arrival').map(asArrival),
+      ])
       const cash = inOrder(operations.filter((op) => op.kind === 'cash').map(asCash))
+
+      // Сделки из выгрузки помечаются своим провайдером. Иначе граница по дате
+      // поехала бы: она считается по самой ранней сделке из API, а после
+      // импорта выгрузки самой ранней стала бы импортированная.
+      const provider = raw.source === 'bybit-statement' ? 'bybit-statement' : account.provider
 
       // До транзакции: иначе импорт держал бы блокировку на общей таблице.
       const instrumentIds = await this.resolveInstruments(trades)
       const { deferred, postponed } = await this.splitUncoveredSales(
         userId,
         raw.accountId,
-        account.provider,
+        provider,
         trades,
         instrumentIds,
       )
@@ -136,6 +183,7 @@ export class ApplyImportService {
       const applied: string[] = []
       let created = 0
       let skipped = 0
+      let arrivals = 0
 
       await this.prisma.withUser(userId, async (tx) => {
         // `try`: второй импорт получает отказ сразу, а не повторяет работу.
@@ -157,14 +205,16 @@ export class ApplyImportService {
             price: operation.price,
             fee: operation.fee,
             executedAt: operation.executedAt,
-            provider: account.provider,
+            provider,
             externalId: operation.externalId,
+            ...(operation.costUnknown ? { costUnknown: true } : {}),
           })
           if (!trade) {
             skipped += 1
             continue
           }
           created += 1
+          if (operation.costUnknown) arrivals += 1
           applied.push(trade.id)
         }
 
@@ -178,7 +228,7 @@ export class ApplyImportService {
               ${raw.accountId}::uuid,
               ${operation.ticker ? (instrumentIds.get(operation.ticker) ?? null) : null}::uuid,
               ${operation.cashKind}, ${operation.amount}::numeric, ${operation.currency},
-              ${new Date(operation.executedAt)}, ${account.provider}, ${operation.externalId}
+              ${new Date(operation.executedAt)}, ${provider}, ${operation.externalId}
             )
             on conflict (account_id, provider, external_id) do nothing
             returning id
@@ -211,7 +261,15 @@ export class ApplyImportService {
             error: null,
             // Итог сохраняется, а не возвращается: применение случилось по
             // событию, и спросить «чем кончилось» больше не у кого.
-            result: { created, skipped, deferred: deferred.length },
+            // Пропущенное разборщиком хранится рядом с итогом: без него
+            // «импортировано N сделок» — правда, вводящая в заблуждение.
+            result: {
+              created,
+              skipped,
+              deferred: deferred.length,
+              arrivals,
+              ...(skippedRows ? { skippedRows } : {}),
+            },
           },
         })
       })
@@ -222,6 +280,7 @@ export class ApplyImportService {
       return {
         created,
         skipped,
+        arrivals,
         deferred: deferred.map(({ ticker, quantity, missing }) => ({ ticker, quantity, missing })),
       }
     } catch (error) {
