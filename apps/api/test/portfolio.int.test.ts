@@ -98,6 +98,8 @@ it('складывает остатки, затраты и реализован�
   // сумма та же, что по счетам.
   expect(byCurrency).toHaveLength(1)
   expect(byCurrency[0]).toMatchObject({ currency: 'RUB', totalPnl: expected.toString() })
+  // Монет без себестоимости в отчёте Сбера не бывает: там всё куплено.
+  expect(money(accounts[0]!.realizedWithoutCost)).toBe('0')
 })
 
 it('показывает бумагу с отложенной продажей и помечает её неполной', async () => {

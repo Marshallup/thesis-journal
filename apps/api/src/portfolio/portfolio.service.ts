@@ -44,6 +44,11 @@ export type PortfolioAccount = {
   // `unrealizedPnl` при непустом счётчике значит «неизвестно», а не «нисколько»:
   // без этого числа экран показывал бы ноль там, где цены просто нет.
   unpricedPositions: number
+  // Часть реализованного, которая пришла от монет без себестоимости: депозит,
+  // airdrop, конвертация. Журнал считает их бесплатными, поэтому прибыль по
+  // ним завышена на всю стоимость монеты — и это обязано быть видно, иначе
+  // число на экране выглядит заработком, которым не является.
+  realizedWithoutCost: string
 }
 
 // Итог на валюту, а не один на всё: доллар к рублю без курса не прибавить, а
@@ -153,6 +158,22 @@ export class PortfolioService {
                realized_pnl::text as "realizedPnl"
           from positions
       `
+      // Реализованное по лотам, у которых себестоимости нет. Считается по
+      // расходам лотов, а не по сделкам: продажа могла съесть и нулевой лот, и
+      // настоящую покупку — разделить это можно только здесь.
+      const withoutCost = new Map(
+        (
+          await tx.$queryRaw<{ accountId: string; realized: string }[]>`
+            select c.account_id as "accountId", sum(c.realized_pnl)::text as realized
+              from lot_consumptions c
+              join lots l on l.id = c.lot_id
+              join trades t on t.id = l.open_trade_id
+             where t.cost_unknown
+             group by c.account_id
+          `
+        ).map((row) => [row.accountId, row.realized]),
+      )
+
       const prices = new Map(
         (
           await tx.$queryRaw<{ instrumentId: string; price: string; quotedAt: Date }[]>`
@@ -246,6 +267,7 @@ export class PortfolioService {
           dividends: dividendsOf.toString(),
           totalPnl: realizedOf.plus(unrealizedOf).plus(feesOf).plus(dividendsOf).toString(),
           unpricedPositions: unpriced,
+          realizedWithoutCost: Money.of(withoutCost.get(account.accountId) ?? '0').toString(),
         }
       })
 
