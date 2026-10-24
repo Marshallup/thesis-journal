@@ -71,10 +71,11 @@ it('в старом кошельке цена выводится деление�
 it('депозит монеты и airdrop становятся приходом без цены', () => {
   const arrivals = statement().operations.filter((operation) => operation.kind === 'arrival')
 
-  // Порядок — по времени: airdrop 5 февраля, депозит 10-го.
+  // Порядок — по времени: airdrop 5 февраля, депозит 10-го, конвертация в марте.
   expect(arrivals).toMatchObject([
     { ticker: 'WLDUSDT', quantity: '3' },
     { ticker: 'BTCUSDT', quantity: '0.01' },
+    { ticker: 'XUSDT', quantity: '500' },
   ])
   // Цены у прихода нет вовсе: её неоткуда взять.
   expect(arrivals.every((operation) => operation.price === undefined)).toBe(true)
@@ -116,7 +117,7 @@ it('приход монеты и деньги границу переживаю�
   const result = parseBybitStatement(statementArchive(), new Date('2024-02-04T00:00:00.000Z'))
 
   const arrivals = result.operations.filter((operation) => operation.kind === 'arrival')
-  expect(arrivals.map((operation) => operation.ticker)).toEqual(['WLDUSDT', 'BTCUSDT'])
+  expect(arrivals.map((operation) => operation.ticker)).toEqual(['WLDUSDT', 'BTCUSDT', 'XUSDT'])
   expect(arrivals.some((operation) => operation.executedAt > '2024-02-04')).toBe(true)
   expect(result.operations.filter((operation) => operation.kind === 'cash')).toHaveLength(3)
 })
@@ -136,4 +137,15 @@ it('незнакомый файл архива попадает в список 
 
   expect(result.skipped.unknownFiles).toEqual(['somethingElse_1.csv'])
   expect(result.operations).toEqual([])
+})
+
+// Строка с незнакомым типом, от которой монета прибавилась, — это приход без
+// себестоимости: конвертация токена, ребрендинг, промо. Поймано на живой
+// выгрузке: 146 956 токенов появились строкой с типом «--», разборщик их
+// потерял, и продажа этих токенов повисла отложенной навсегда.
+it('незнакомый тип с прибавкой монеты становится приходом', () => {
+  const arrivals = statement().operations.filter((operation) => operation.kind === 'arrival')
+
+  expect(arrivals.map((operation) => operation.ticker)).toContain('XUSDT')
+  expect(arrivals.find((operation) => operation.ticker === 'XUSDT')?.quantity).toBe('500')
 })

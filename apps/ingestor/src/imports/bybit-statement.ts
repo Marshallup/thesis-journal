@@ -21,6 +21,8 @@ const QUOTE = 'USDT'
 // Стейблкоины — это деньги, а не бумага: их приход идёт взносом, а не лотом.
 const STABLES = new Set(['USDT', 'USDC', 'DAI', 'FDUSD'])
 
+const ZERO = Money.of('0')
+
 export type Skipped = {
   // Производные: позиции с плечом, фондирование, ликвидации. Модели для них
   // нет (решено 24.10.2026), но молчать о них нельзя — в иной год они делают
@@ -131,19 +133,36 @@ function spotTrade(group: Leg[], when: string, index: number): RawOperation | nu
 
 function parseUta(rows: Leg[], skipped: Skipped, keep: (when: string) => boolean): RawOperation[] {
   const groups = new Map<string, Leg[]>()
+  const arrivals: RawOperation[] = []
+
   for (const row of rows) {
     if (row.Type !== 'TRADE') {
       // Расчёты по позициям и ликвидации — производные. Переводы между своими
       // кошельками не движение денег, а перекладывание: внешний приход виден в
       // файле депозитов, и считать его дважды нельзя.
       if (row.Type === 'SETTLEMENT' || row.Type === 'LIQUIDATION') skipped.derivatives += 1
+      else if (row.Type !== 'TRANSFER_IN' && row.Type !== 'TRANSFER_OUT') {
+        // Тип, которого мы не знаем: конвертация токена, ребрендинг, промо.
+        // Прибавилась монета — это приход без себестоимости, убыла — вывод.
+        // Поймано на живой выгрузке: 146 956 токенов появились строкой с типом
+        // «--», разборщик их потерял, и продажа повисла отложенной навсегда,
+        // потому что покупки у неё нет и не было.
+        const coin = row.Currency ?? ''
+        const change = Money.of(row['Cash Flow'] || '0')
+        if (!STABLES.has(coin) && !change.eq(ZERO)) {
+          if (change.gt(ZERO)) {
+            const when = atUtc(row['Time(UTC)'] ?? '')
+            arrivals.push(arrival(coin, change.toString(), when, row.Type ?? ''))
+          } else skipped.withdrawals += 1
+        }
+      }
       continue
     }
     const key = [row['Time(UTC)'], row.Contract, row.Direction, row['Filled Price']].join('|')
     groups.set(key, [...(groups.get(key) ?? []), row])
   }
 
-  const operations: RawOperation[] = []
+  const operations: RawOperation[] = [...arrivals]
   let index = 0
   for (const [, group] of groups) {
     const when = atUtc(group[0]?.['Time(UTC)'] ?? '')
