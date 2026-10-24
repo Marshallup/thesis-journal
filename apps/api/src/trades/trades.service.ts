@@ -9,7 +9,13 @@ import type { ApplyTrade } from './dto.ts'
 const ZERO = Money.of('0')
 
 // У импортированной сделки есть номер из отчёта, у ручной external_id — NULL.
-export type ApplyInput = ApplyTrade & { provider: string; externalId: string | null }
+export type ApplyInput = ApplyTrade & {
+  provider: string
+  externalId: string | null
+  // Монета пришла не покупкой: цена ноль, себестоимость неизвестна. Пометка
+  // доезжает до экрана, чтобы завышенная прибыль была видна.
+  costUnknown?: boolean
+}
 
 // Только эти два поля: читать счёт на каждую строку отчёта незачем.
 type TradeAccount = { id: string; baseCurrency: string }
@@ -85,12 +91,12 @@ export class TradesService {
     const inserted = await tx.$queryRaw<{ id: string }[]>`
       insert into trades
         (account_id, instrument_id, side, quantity, price,
-         fee, fee_currency, executed_at, provider, external_id)
+         fee, fee_currency, executed_at, provider, external_id, cost_unknown)
       values (
         ${input.accountId}::uuid, ${input.instrumentId}::uuid, ${input.side},
         ${input.quantity}::numeric, ${input.price}::numeric,
         ${input.fee}::numeric, ${account.baseCurrency}, ${executedAt},
-        ${input.provider}, ${input.externalId}
+        ${input.provider}, ${input.externalId}, ${input.costUnknown ?? false}
       )
       on conflict (account_id, provider, external_id) do nothing
       returning id

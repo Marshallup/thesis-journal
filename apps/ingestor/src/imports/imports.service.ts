@@ -1,18 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common'
 import type { OnApplicationBootstrap } from '@nestjs/common'
 import { IMPORT_PARSE_QUEUE, IMPORT_PARSED_TOPIC } from '@thesis/contracts'
-import type { ImportParse, ImportParsed, RawOperation } from '@thesis/contracts'
+import type { ImportParse, ImportParsed, RawOperation, SkippedRows } from '@thesis/contracts'
 import { PrismaService } from '../db/prisma.service.ts'
 import { OutboxRepository } from '../outbox/outbox.repository.ts'
 import { PermanentFailure, RabbitConsumer } from '../rabbit/rabbit.consumer.ts'
+import { parseBybitStatement } from './bybit-statement.ts'
 import { parseSberXlsx } from './sber-xlsx.ts'
 
-// Разбор сырья по источнику. У отчёта это XLSX, у синхронизации — уже
-// разобранные операции: коннектор сложил их байтами в то же место, и
-// «разобрать заново» означает перечитать их, а не идти к бирже второй раз.
-const PARSERS = new Map<string, (payload: Buffer) => Promise<RawOperation[]>>([
-  ['sber', parseSberXlsx],
-  ['bybit', readOperations],
+type Parsed = { operations: RawOperation[]; skipped?: SkippedRows }
+
+// Разбор сырья по источнику. У отчёта Сбера это XLSX, у синхронизации — уже
+// разобранные операции (коннектор сложил их байтами в то же место, и
+// «разобрать заново» означает перечитать их, а не идти к бирже второй раз), у
+// выгрузки из кабинета Bybit — архив из нескольких CSV.
+const PARSERS = new Map<string, (payload: Buffer, command: ImportParse) => Promise<Parsed>>([
+  ['sber', async (payload) => ({ operations: await parseSberXlsx(payload) })],
+  ['bybit', async (payload) => ({ operations: await readOperations(payload) })],
+  [
+    'bybit-statement',
+    (payload, command) =>
+      Promise.resolve(
+        parseBybitStatement(payload, command.cutoff ? new Date(command.cutoff) : undefined),
+      ),
+  ],
 ])
 
 // Своё сырьё, а не чужой ввод, но разбирать его всё равно надо проверяя: битый
@@ -56,9 +67,16 @@ export class ImportsService implements OnApplicationBootstrap {
     }
 
     try {
-      const operations = await PARSERS.get(command.source)!(payload)
-      await this.publish({ ...this.envelope(command), operations })
-      this.log.log(`импорт ${command.importId}: операций ${operations.length}`)
+      const { operations, skipped } = await PARSERS.get(command.source)!(payload, command)
+      await this.publish({
+        ...this.envelope(command),
+        operations,
+        ...(skipped ? { skipped } : {}),
+      })
+      this.log.log(
+        `импорт ${command.importId}: операций ${operations.length}` +
+          (skipped ? `, пропущено производных ${skipped.derivatives}` : ''),
+      )
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       await this.reportFailure(command, reason)

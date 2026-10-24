@@ -178,6 +178,10 @@ model Trade {
   fee         Decimal  @db.Decimal(28, 8)
   feeCurrency String   @map("fee_currency")
   executedAt  DateTime @map("executed_at") @db.Timestamptz(6)
+  // Монета пришла не покупкой — депозитом, airdrop'ом, переводом извне.
+  // Себестоимости у неё нет, записана нулевая: продажа такой монеты даёт
+  // завышенную прибыль, и пометка нужна, чтобы это было видно, а не спрятано.
+  costUnknown Boolean  @default(false) @map("cost_unknown")
   provider    String
   // Ключ идемпотентности импорта: у ручной сделки внешнего идентификатора нет.
   externalId  String?  @map("external_id")

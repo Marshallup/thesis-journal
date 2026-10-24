@@ -18,7 +18,19 @@ type Pending = {
   occurredAt: string
 }
 type Upload = { importId: string; status: 'uploaded' | 'duplicate' }
-type ImportResult = { created: number; skipped: number; deferred: number }
+type SkippedRows = {
+  derivatives: number
+  newer: number
+  withdrawals: number
+  unknownFiles: string[]
+}
+type ImportResult = {
+  created: number
+  skipped: number
+  deferred: number
+  arrivals?: number
+  skippedRows?: SkippedRows
+}
 type ImportStatus = {
   id: string
   status: 'uploaded' | 'parsing' | 'parsed' | 'failed'
@@ -111,7 +123,14 @@ export function ImportPage() {
     byImport.set(operation.importId, [...(byImport.get(operation.importId) ?? []), operation])
   }
 
-  const sberAccounts = accounts.data?.filter((account) => account.provider === 'sber') ?? []
+  // Заливать можно отчёт Сбера и выгрузку из кабинета Bybit: форматы разные,
+  // разборщик выбирается по провайдеру счёта.
+  const sberAccounts =
+    accounts.data?.filter(
+      (account) => account.provider === 'sber' || account.provider === 'bybit',
+    ) ?? []
+  const chosen = sberAccounts.find((account) => account.id === accountId)
+  const exchange = chosen?.provider === 'bybit'
 
   // Отложенные продажи приезжают и с биржи, не только из отчёта Сбера. Поэтому
   // заслонка на весь экран ставится лишь тогда, когда и заливать некуда, и
@@ -120,10 +139,10 @@ export function ImportPage() {
   if (accounts.isSuccess && sberAccounts.length === 0 && (pending.data?.length ?? 0) === 0) {
     return (
       <main className="mx-auto w-full max-w-xl px-4 py-8">
-        <h1 className="font-serif text-xl">Сначала счёт Сбера</h1>
+        <h1 className="font-serif text-xl">Сначала счёт</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Отчёт заливается в счёт, и разбирается пока только выгрузка Сбера. Счёт с другим
-          провайдером её не примет.
+          Отчёт заливается в счёт. Разбираются выгрузка Сбера (XLSX) и архив из кабинета Bybit —
+          значит нужен счёт с одним из этих провайдеров.
         </p>
         <Link to="/accounts/new?next=/imports" className="mt-4 inline-block text-sm text-accent">
           Завести счёт
@@ -140,17 +159,27 @@ export function ImportPage() {
           Сделки
         </Link>
       </header>
-      <p className="mt-1 text-sm text-ink-muted">
-        XLSX «Операции» из личного кабинета Сбера. Выгрузка там ограничена периодом в год, поэтому
-        историю длиннее заливайте по одному отчёту на год, начиная с самого старого: продажа не
-        применится, пока в журнале нет покупки. Повторная заливка того же файла безопасна — сделки и
-        движения денег не задваиваются.
-      </p>
+      {exchange ? (
+        <p className="mt-1 text-sm text-ink-muted">
+          Архив выгрузки из кабинета Bybit: «Профиль → Account → Data Export», журнал транзакций. За
+          один запрос дают год, доступны пять лет. Берутся спот и движения денег; операции с
+          фьючерсами в лотовую модель не ложатся и будут посчитаны отдельной строкой. Сделки,
+          приехавшие синхронизацией, из выгрузки не берутся — граница проводится по самой ранней из
+          них.
+        </p>
+      ) : (
+        <p className="mt-1 text-sm text-ink-muted">
+          XLSX «Операции» из личного кабинета Сбера. Выгрузка там ограничена периодом в год, поэтому
+          историю длиннее заливайте по одному отчёту на год, начиная с самого старого: продажа не
+          применится, пока в журнале нет покупки. Повторная заливка того же файла безопасна — сделки
+          и движения денег не задваиваются.
+        </p>
+      )}
 
       {sberAccounts.length === 0 ? (
         <p className="mt-4 text-sm text-ink-muted">
-          Счёта Сбера нет, поэтому заливать отчёт некуда. Отложенные операции ниже приехали с биржи:
-          им нужны покупки, которых в выгрузке не было.
+          Счёта, в который можно залить отчёт, нет. Отложенные операции ниже приехали с биржи: им
+          нужны покупки, которых в выгрузке не было.
         </p>
       ) : null}
 
@@ -202,7 +231,7 @@ export function ImportPage() {
           <input
             id={fileInputId}
             type="file"
-            accept=".xlsx"
+            accept={exchange ? '.zip' : '.xlsx'}
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             className="text-sm"
           />
@@ -244,7 +273,28 @@ export function ImportPage() {
               <>
                 <p className="tabular">
                   Создано {send.data.result.created}, пропущено {send.data.result.skipped}
+                  {(send.data.result.arrivals ?? 0) > 0
+                    ? `, из них приходов монет ${send.data.result.arrivals}`
+                    : ''}
                 </p>
+                {(send.data.result.arrivals ?? 0) > 0 ? (
+                  // Приход — не покупка: цены у него нет, себестоимость
+                  // записана нулевой. Молчать об этом нельзя, иначе прибыль по
+                  // такой монете выглядит настоящей.
+                  <p className="mt-1 text-ink-muted">
+                    Приход монеты — это депозит, airdrop или перевод извне: цены покупки у него нет,
+                    и себестоимость записана нулевой. Продажа такой монеты даст завышенную прибыль —
+                    на всю её стоимость.
+                  </p>
+                ) : null}
+                {send.data.result.skippedRows && send.data.result.skippedRows.derivatives > 0 ? (
+                  <p className="mt-1 text-ink-muted">
+                    Операций с фьючерсами в выгрузке:{' '}
+                    <span className="tabular">{send.data.result.skippedRows.derivatives}</span>. Они
+                    не учтены: позиция с плечом, фондирование и ликвидации в лотовую модель не
+                    ложатся, и итог по счёту их не включает.
+                  </p>
+                ) : null}
                 <p className="mt-1 text-ink-muted">
                   {send.data.duplicate
                     ? 'Этот файл уже загружался. Применили его снова — пропущенное и есть то, что было в журнале.'

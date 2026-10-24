@@ -106,7 +106,12 @@ export class ImportsConsumer implements OnApplicationBootstrap, OnApplicationShu
     }
 
     try {
-      const result = await this.apply.apply(event.userId, event.importId, event.operations)
+      const result = await this.apply.apply(
+        event.userId,
+        event.importId,
+        event.operations,
+        event.skipped,
+      )
       this.log.log(
         `импорт ${event.importId}: создано ${result.created}, пропущено ${result.skipped}, отложено ${result.deferred.length}`,
       )
