@@ -33,6 +33,7 @@ type PortfolioAccount = {
   realizedPnl: string
   unrealizedPnl: string
   unpricedPositions: number
+  realizedWithoutCost: string
   fees: string
   dividends: string
   totalPnl: string
@@ -90,6 +91,7 @@ export function TradesPage() {
   const byAccount = portfolio.data?.accounts ?? []
   const byCurrency = portfolio.data?.byCurrency ?? []
   const unpriced = byAccount.reduce((sum, account) => sum + account.unpricedPositions, 0)
+  const withoutCost = byAccount.filter((account) => account.realizedWithoutCost !== '0')
   // Подпись безымянного счёта уточняется только на фоне остальных.
   const labels = byAccount.map((account) => ({ ...account, id: account.accountId }))
   const hasPaper = byAccount.some((account) => account.kind === 'paper')
@@ -165,6 +167,7 @@ export function TradesPage() {
                   </td>
                   <td className="h-8 text-right">
                     <Money value={account.realizedPnl} signed />
+                    {account.realizedWithoutCost !== '0' ? <sup>†</sup> : null}
                   </td>
                   {/* Прочерк, а не ноль: если ни по одной открытой позиции нет
                       цены, нереализованного не «нисколько» — оно неизвестно.
@@ -214,6 +217,23 @@ export function TradesPage() {
               <Link to="/decisions" className="text-accent">
                 Посмотреть
               </Link>
+            </p>
+          ) : null}
+
+          {withoutCost.length > 0 ? (
+            // Прибыль по монете, пришедшей не покупкой, завышена на всю её
+            // стоимость: себестоимости у неё нет, и журнал считает её
+            // бесплатной. Без этой строки число выглядит заработком.
+            <p className="mt-2 text-sm">
+              † Из реализованного получено по монетам без себестоимости:{' '}
+              {withoutCost.map((account, i) => (
+                <span key={account.accountId}>
+                  {i > 0 ? ', ' : ''}
+                  <Money value={account.realizedWithoutCost} signed /> {account.baseCurrency}
+                </span>
+              ))}
+              . Это депозиты, airdrop'ы и конвертации: цены покупки у них нет, и прибыль по ним
+              завышена на всю стоимость монеты.
             </p>
           ) : null}
 

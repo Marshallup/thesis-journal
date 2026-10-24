@@ -5,6 +5,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { ApplyImportService } from '../src/imports/apply-import.service.ts'
 import { DbModule } from '../src/db/db.module.ts'
 import { ImportsModule } from '../src/imports/imports.module.ts'
+import { PortfolioModule } from '../src/portfolio/portfolio.module.ts'
+import { PortfolioService } from '../src/portfolio/portfolio.service.ts'
 import { RabbitPublisher } from '../src/rabbit/rabbit.publisher.ts'
 import type { RawOperation } from '@thesis/contracts'
 import { withTestDb } from './setup-db.ts'
@@ -14,7 +16,9 @@ let moduleRef: Awaited<ReturnType<typeof createModule>>
 let service: ApplyImportService
 
 async function createModule() {
-  const ref = await Test.createTestingModule({ imports: [DbModule, ImportsModule] })
+  const ref = await Test.createTestingModule({
+    imports: [DbModule, ImportsModule, PortfolioModule],
+  })
     .overrideProvider(RabbitPublisher)
     .useValue({ send: () => {} })
     .compile()
@@ -150,4 +154,25 @@ it('повторный приход не задваивается', async () => 
 
   expect(second).toMatchObject({ created: 0, skipped: 1, arrivals: 0 })
   expect(await db.prisma.lot.count({ where: { accountId: seed.accountId } })).toBe(1)
+})
+
+// Прибыль по монете без себестоимости завышена на всю её стоимость, и это
+// обязано быть видно отдельной строкой: иначе число на экране выглядит
+// заработком, которым не является. Поймано на живых данных 24.10.2026, когда
+// итог по счёту вырос до +4473 USDT, из которых 3832 — ровно этот случай.
+it('реализованное по приходам считается отдельно от настоящих покупок', async () => {
+  const seed = await seedStatement()
+
+  await service.apply(seed.userId, seed.importId, [
+    arrival('0.001', '2024-11-16T04:21:48.000Z'),
+    sale('0.001', '100000', '2024-12-05T02:32:16.000Z'),
+  ])
+
+  const portfolio = moduleRef.get(PortfolioService)
+  const { accounts } = await portfolio.summary(seed.userId)
+  const account = accounts.find((item) => item.accountId === seed.accountId)!
+
+  expect(Money.of(account.realizedPnl).toString()).toBe('100')
+  // Вся сотня — от монеты, которой не покупали.
+  expect(Money.of(account.realizedWithoutCost).toString()).toBe('100')
 })
