@@ -29,12 +29,12 @@ export function useLivePortfolio(enabled: boolean): LiveTotal | null {
 
       socket.addEventListener('open', () => {
         attempt = 0
-        socket?.send(JSON.stringify({ event: 'auth', data: { token: getAccessToken() } }))
+        socket?.send(JSON.stringify({ type: 'auth', token: getAccessToken() }))
       })
 
       socket.addEventListener('message', (event: MessageEvent) => {
-        const message = JSON.parse(String(event.data)) as { event?: string; data?: LiveTotal }
-        if (message.event === 'portfolio.value' && message.data) setValue(message.data)
+        const message = JSON.parse(String(event.data)) as Partial<LiveTotal> & { type?: string }
+        if (message.type === 'portfolio.value' && message.total) setValue(message as LiveTotal)
       })
 
       socket.addEventListener('close', (event: CloseEvent) => {
