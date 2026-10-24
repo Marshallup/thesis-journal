@@ -14,16 +14,10 @@ type Parsed = { operations: RawOperation[]; skipped?: SkippedRows }
 // разобранные операции (коннектор сложил их байтами в то же место, и
 // «разобрать заново» означает перечитать их, а не идти к бирже второй раз), у
 // выгрузки из кабинета Bybit — архив из нескольких CSV.
-const PARSERS = new Map<string, (payload: Buffer, command: ImportParse) => Promise<Parsed>>([
+const PARSERS = new Map<string, (payload: Buffer) => Promise<Parsed>>([
   ['sber', async (payload) => ({ operations: await parseSberXlsx(payload) })],
   ['bybit', async (payload) => ({ operations: await readOperations(payload) })],
-  [
-    'bybit-statement',
-    (payload, command) =>
-      Promise.resolve(
-        parseBybitStatement(payload, command.cutoff ? new Date(command.cutoff) : undefined),
-      ),
-  ],
+  ['bybit-statement', (payload) => Promise.resolve(parseBybitStatement(payload))],
 ])
 
 // Своё сырьё, а не чужой ввод, но разбирать его всё равно надо проверяя: битый
@@ -67,7 +61,7 @@ export class ImportsService implements OnApplicationBootstrap {
     }
 
     try {
-      const { operations, skipped } = await PARSERS.get(command.source)!(payload, command)
+      const { operations, skipped } = await PARSERS.get(command.source)!(payload)
       await this.publish({
         ...this.envelope(command),
         operations,

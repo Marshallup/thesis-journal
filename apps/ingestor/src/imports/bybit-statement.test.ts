@@ -19,7 +19,7 @@ it('спотовая покупка берёт цену из строки, ко�
     ticker: 'TIAUSDT',
     instrumentClass: 'crypto',
     quantity: '12.5',
-    price: '8.00000000',
+    price: '8',
     currency: 'USDT',
     // 0.0125 TIA × 8 = 0.1 USDT
     fee: '0.1',
@@ -29,7 +29,7 @@ it('спотовая покупка берёт цену из строки, ко�
 it('спотовая продажа берёт комиссию как есть: она уже в валюте сделки', () => {
   const sell = trades().find((operation) => operation.executedAt.startsWith('2024-03-05'))
 
-  expect(sell).toMatchObject({ side: 'sell', quantity: '7.5', price: '9.00000000', fee: '0.0675' })
+  expect(sell).toMatchObject({ side: 'sell', quantity: '7.5', price: '9', fee: '0.0675' })
 })
 
 // Главное отличие: у перпетуала нет ноги в самой монете. Ни он, ни расчёты, ни
@@ -41,6 +41,8 @@ it('перпетуалы, расчёты и ликвидации не стано
     'NEARUSDT',
     'NEARUSDT',
     'NEARUSDT',
+    'TIAUSDT',
+    'TIAUSDT',
     'TIAUSDT',
     'TIAUSDT',
   ])
@@ -97,28 +99,28 @@ it('вывод монеты не применяется, но попадает �
   expect(statement().skipped.withdrawals).toBe(1)
 })
 
-// Граница по дате отбрасывает **только сделки**: это они приезжают по API со
-// своим идентификатором, и только их можно задвоить.
-it('сделки новее границы отбрасываются и считаются', () => {
-  const result = parseBybitStatement(statementArchive(), new Date('2024-02-04T00:00:00.000Z'))
-  const kept = result.operations.filter((operation) => operation.kind === 'trade')
+// Заявка дробится на исполнения, и все они приходят одной группой: одно время,
+// одна цена, одно направление. Каждое остаётся отдельной сделкой — по API эти
+// же исполнения приедут по одному, и сверка по содержимому должна совпадать
+// строка в строку. На живой выгрузке нашлась заявка из девяти частей, и прежний
+// разборщик брал из неё первую.
+it('заявка из нескольких исполнений даёт столько же сделок', () => {
+  const parts = trades().filter((operation) => operation.executedAt.startsWith('2024-03-09'))
 
-  expect(kept.every((operation) => operation.executedAt < '2024-02-04')).toBe(true)
-  expect(result.skipped.newer).toBeGreaterThan(0)
+  expect(parts.map((operation) => operation.quantity)).toEqual(['4', '6'])
+  expect(new Set(parts.map((operation) => operation.price))).toEqual(new Set(['10']))
+  // Идентификаторы разные: иначе второе исполнение отбилось бы как дубль.
+  expect(new Set(parts.map((operation) => operation.externalId)).size).toBe(2)
 })
 
-// А приход монеты граница знать не должна: по API он не приезжает никогда, и
-// отбросив его по дате, мы потеряем единственный источник себестоимости для
-// монет, пришедших не покупкой.
-//
-// Поймано на живой выгрузке 24.10.2026: с границей на всё пять BTC-депозитов
-// исчезали, и именно они объясняют продажи, висевшие без покупок.
-it('приход монеты и деньги границу переживают', () => {
-  const result = parseBybitStatement(statementArchive(), new Date('2024-02-04T00:00:00.000Z'))
+// Деньги и приход монеты никакой границей не отбрасываются: по API они не
+// приезжают вовсе, и других источников у них нет.
+it('приходы монет и деньги разбираются целиком', () => {
+  const result = statement()
 
-  const arrivals = result.operations.filter((operation) => operation.kind === 'arrival')
-  expect(arrivals.map((operation) => operation.ticker)).toEqual(['WLDUSDT', 'BTCUSDT', 'XUSDT'])
-  expect(arrivals.some((operation) => operation.executedAt > '2024-02-04')).toBe(true)
+  expect(
+    result.operations.filter((operation) => operation.kind === 'arrival').map((o) => o.ticker),
+  ).toEqual(['WLDUSDT', 'BTCUSDT', 'XUSDT'])
   expect(result.operations.filter((operation) => operation.kind === 'cash')).toHaveLength(3)
 })
 

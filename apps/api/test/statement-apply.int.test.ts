@@ -46,14 +46,28 @@ async function seedStatement() {
   return { userId: user.id, accountId: account.id, importId: row.id }
 }
 
-const arrival = (quantity: string, when: string): RawOperation => ({
+const arrival = (quantity: string, when: string, ticker = 'BTCUSDT'): RawOperation => ({
   kind: 'arrival',
-  ticker: 'BTCUSDT',
+  ticker,
   instrumentClass: 'crypto',
   quantity,
   currency: 'USDT',
   executedAt: when,
   externalId: `deposit-${when}`,
+})
+
+// Одинаковые части одной заявки: различаются только идентификатором.
+const fill = (externalId: string): RawOperation => ({
+  kind: 'trade',
+  side: 'buy',
+  ticker: 'TIAUSDT',
+  instrumentClass: 'crypto',
+  quantity: '5',
+  price: '8',
+  fee: '0',
+  currency: 'USDT',
+  executedAt: '2025-04-01T12:00:00.000Z',
+  externalId,
 })
 
 const sale = (quantity: string, price: string, when: string): RawOperation => ({
@@ -175,4 +189,81 @@ it('реализованное по приходам считается отде
   expect(Money.of(account.realizedPnl).toString()).toBe('100')
   // Вся сотня — от монеты, которой не покупали.
   expect(Money.of(account.realizedWithoutCost).toString()).toBe('100')
+})
+
+// Та же сделка приезжает двумя путями: по API со своим `execId` и из выгрузки
+// с ключом из содержимого. Ключ идемпотентности их не связывает, и без сверки
+// по содержимому журнал задвоил бы сделку — а порядок загрузки решал бы, верны
+// ли деньги. Решено 24.10.2026: сверять содержимое с учётом кратности.
+it('сделка, уже приехавшая по API, не задваивается из выгрузки', async () => {
+  const seed = await seedStatement()
+  const bought = {
+    kind: 'trade' as const,
+    side: 'buy' as const,
+    ticker: 'BTCUSDT',
+    instrumentClass: 'crypto' as const,
+    quantity: '0.01',
+    price: '90000',
+    fee: '0.9',
+    currency: 'USDT',
+    executedAt: '2025-03-01T10:00:00.000Z',
+    externalId: 'exec-from-api',
+  }
+
+  await service.apply(seed.userId, seed.importId, [bought])
+  // То же исполнение из выгрузки: идентификатор другой, содержимое то же.
+  const again = await service.apply(seed.userId, seed.importId, [
+    { ...bought, externalId: 'hash-from-statement', fee: '0.901' },
+  ])
+
+  expect(again).toMatchObject({ created: 0, skipped: 1 })
+  expect(await db.prisma.trade.count({ where: { accountId: seed.accountId } })).toBe(1)
+})
+
+// Кратность: биржа дробит заявку на одинаковые исполнения в одну секунду.
+// Сравнение «есть или нет» слило бы их в одну сделку, поэтому считается, сколько
+// таких уже записано, и добавляется разница.
+it('три одинаковых исполнения против двух записанных добавляют одно', async () => {
+  const seed = await seedStatement()
+
+  await service.apply(seed.userId, seed.importId, [fill('api-1'), fill('api-2')])
+  const third = await service.apply(seed.userId, seed.importId, [
+    fill('csv-1'),
+    fill('csv-2'),
+    fill('csv-3'),
+  ])
+
+  expect(third).toMatchObject({ created: 1, skipped: 2 })
+  expect(await db.prisma.trade.count({ where: { accountId: seed.accountId } })).toBe(3)
+})
+
+// Порядок загрузки больше не имеет значения — это и было целью. Сначала
+// выгрузка, потом синхронизация: результат тот же.
+it('порядок загрузки не меняет результат', async () => {
+  const seed = await seedStatement()
+  const sold = {
+    kind: 'trade' as const,
+    side: 'sell' as const,
+    ticker: 'ETHUSDT',
+    instrumentClass: 'crypto' as const,
+    quantity: '0.5',
+    price: '3000',
+    fee: '1.5',
+    currency: 'USDT',
+    executedAt: '2025-05-01T09:00:00.000Z',
+    externalId: 'from-statement',
+  }
+
+  await service.apply(seed.userId, seed.importId, [
+    arrival('0.5', '2025-04-20T09:00:00.000Z', 'ETHUSDT'),
+    { ...sold, ticker: 'ETHUSDT' },
+  ])
+  const fromApi = await service.apply(seed.userId, seed.importId, [
+    { ...sold, externalId: 'from-api' },
+  ])
+
+  expect(fromApi).toMatchObject({ created: 0, skipped: 1 })
+  expect(await db.prisma.trade.count({ where: { accountId: seed.accountId, side: 'sell' } })).toBe(
+    1,
+  )
 })

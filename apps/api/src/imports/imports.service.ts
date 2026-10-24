@@ -81,12 +81,6 @@ export class ImportsService {
 
     if (!result.fresh) return { importId: result.importId, status: 'duplicate' }
 
-    // Граница по дате для выгрузки из кабинета: всё, что новее самой ранней
-    // сделки, приехавшей по API, уже есть в журнале со своим `execId`. Считает
-    // её api — только он видит свои сделки, у воркера прав на них нет.
-    const cutoff =
-      result.source === 'bybit-statement' ? await this.apiCutoff(userId, accountId) : null
-
     // Байты уезжают в команде. Решено 22.10: отчёт Сбера — сотни килобайт,
     // брокер их вынесет, а объектное хранилище ради одного файла в неделю —
     // третий сервис в compose. Потолок держит контроллер; при первом отчёте на
@@ -98,31 +92,11 @@ export class ImportsService {
       source: result.source,
       fileHash,
       payloadBase64: payload.toString('base64'),
-      ...(cutoff ? { cutoff: cutoff.toISOString() } : {}),
     }
     this.rabbit.send(IMPORT_PARSE_QUEUE, command)
     this.log.log(`импорт ${result.importId}: команда на разбор отправлена`)
 
     return { importId: result.importId, status: 'uploaded' }
-  }
-
-  // Самая ранняя сделка счёта, пришедшая синхронизацией. Провайдер здесь
-  // именно `bybit`, а не счётный: сделки из выгрузки помечены своим
-  // провайдером, и считать границу по ним значило бы сдвигать её с каждым
-  // импортом.
-  private async apiCutoff(userId: string, accountId: string): Promise<Date | null> {
-    const [earliest] = await this.prisma.withUser(
-      userId,
-      (tx) =>
-        tx.$queryRaw<{ executedAt: Date }[]>`
-        select min(executed_at) as "executedAt"
-          from trades
-         where account_id = ${accountId}::uuid
-           and provider = 'bybit'
-           and external_id is not null
-      `,
-    )
-    return earliest?.executedAt ?? null
   }
 
   // Повторный разбор: байты уже у воркера, гонять файл второй раз незачем.

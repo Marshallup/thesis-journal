@@ -28,8 +28,6 @@ export type Skipped = {
   // нет (решено 24.10.2026), но молчать о них нельзя — в иной год они делают
   // весь результат.
   derivatives: number
-  // Новее границы: эти операции уже приехали по API, со своим идентификатором.
-  newer: number
   // Вывод монеты из кошелька: остаток на бирже уменьшился, а в журнале для
   // этого нет операции. Запись в docs/unknowns.md.
   withdrawals: number
@@ -89,49 +87,72 @@ type Leg = Record<string, string>
 // Исполнение спотовое тогда и только тогда, когда среди его строк есть нога в
 // базовой монете пары: биржа зачисляет купленную монету. У перпетуала строка
 // одна и всегда в валюте залога, а `Quantity` — размер позиции.
-function spotTrade(group: Leg[], when: string, index: number): RawOperation | null {
+//
+// Ног в монете может быть несколько: заявка дробится на исполнения, и все они
+// попадают в одну группу — одно время, одна цена, одно направление. Каждое
+// остаётся **отдельной сделкой**, а не складывается в одну: по API эти же
+// исполнения приедут по одному, и сверка по содержимому должна совпадать
+// строка в строку. Найдено на живой выгрузке: заявка по XRP разбита на девять
+// частей, и прежний разборщик брал из неё только первую.
+function spotTrades(group: Leg[], when: string, from: number): RawOperation[] {
   const contract = group[0]?.Contract ?? ''
   const base = contract.slice(0, -QUOTE.length)
-  const baseLeg = group.find((leg) => leg.Currency === base)
-  if (!contract.endsWith(QUOTE) || !baseLeg) return null
+  if (!contract.endsWith(QUOTE)) return []
 
-  const price = group[0]?.['Filled Price'] ?? '0'
-  const quantity = Money.of(baseLeg.Quantity ?? '0')
-    .abs()
-    .toString()
-  const feeLeg = group.find((leg) =>
-    Money.of(leg['Fee Paid'] ?? '0')
+  const baseLegs = group.filter((leg) => leg.Currency === base)
+  if (baseLegs.length === 0) return []
+
+  // Цена через Money: выгрузка пишет восемь нулей после запятой, а сверка по
+  // содержимому сравнивает строки — и «10.00000000» не должно отличаться от «10».
+  const price = Money.of(group[0]?.['Filled Price'] ?? '0').toString()
+  const side = group[0]?.Direction === 'BUY' ? 'buy' : 'sell'
+
+  return baseLegs.map((leg, i) => {
+    const quantity = Money.of(leg.Quantity ?? '0')
       .abs()
-      .gt(Money.of('0')),
-  )
-  const fee = feeLeg
-    ? feeInQuote({
-        fee: Money.of(feeLeg['Fee Paid'] ?? '0')
-          .abs()
-          .toString(),
-        feeCurrency: feeLeg.Currency ?? QUOTE,
-        symbol: contract,
-        price,
-        quote: QUOTE,
-        what: `выгрузки ${contract} от ${when}`,
-      })
-    : '0'
+      .toString()
+    // Комиссия своя у каждого исполнения: при покупке она списана купленной
+    // монетой с этой же строки, при продаже — вырученным USDT с ноги оплаты.
+    const feeLeg = Money.of(leg['Fee Paid'] ?? '0')
+      .abs()
+      .gt(ZERO)
+      ? leg
+      : group.find(
+          (other) =>
+            other.Currency === QUOTE &&
+            Money.of(other['Fee Paid'] ?? '0')
+              .abs()
+              .gt(ZERO),
+        )
+    const fee = feeLeg
+      ? feeInQuote({
+          fee: Money.of(feeLeg['Fee Paid'] ?? '0')
+            .abs()
+            .toString(),
+          feeCurrency: feeLeg.Currency ?? QUOTE,
+          symbol: contract,
+          price,
+          quote: QUOTE,
+          what: `выгрузки ${contract} от ${when}`,
+        })
+      : '0'
 
-  return {
-    kind: 'trade',
-    side: group[0]?.Direction === 'BUY' ? 'buy' : 'sell',
-    ticker: contract,
-    instrumentClass: 'crypto',
-    quantity,
-    price,
-    fee,
-    currency: QUOTE,
-    executedAt: when,
-    externalId: idOf([contract, group[0]?.Direction ?? '', price, quantity, when, index]),
-  }
+    return {
+      kind: 'trade',
+      side,
+      ticker: contract,
+      instrumentClass: 'crypto',
+      quantity,
+      price,
+      fee,
+      currency: QUOTE,
+      executedAt: when,
+      externalId: idOf([contract, side, price, quantity, when, from + i]),
+    } satisfies RawOperation
+  })
 }
 
-function parseUta(rows: Leg[], skipped: Skipped, keep: (when: string) => boolean): RawOperation[] {
+function parseUta(rows: Leg[], skipped: Skipped): RawOperation[] {
   const groups = new Map<string, Leg[]>()
   const arrivals: RawOperation[] = []
 
@@ -166,13 +187,9 @@ function parseUta(rows: Leg[], skipped: Skipped, keep: (when: string) => boolean
   let index = 0
   for (const [, group] of groups) {
     const when = atUtc(group[0]?.['Time(UTC)'] ?? '')
-    if (!keep(when)) {
-      skipped.newer += group.length
-      continue
-    }
-    const trade = spotTrade(group, when, index)
-    index += 1
-    if (trade) operations.push(trade)
+    const trades = spotTrades(group, when, index)
+    index += trades.length
+    if (trades.length > 0) operations.push(...trades)
     else skipped.derivatives += group.length
   }
   return operations
@@ -196,11 +213,7 @@ function chain(legs: Leg[]): Leg[] {
   })
 }
 
-function parseOldSpot(
-  rows: Leg[],
-  skipped: Skipped,
-  keep: (when: string) => boolean,
-): RawOperation[] {
+function parseOldSpot(rows: Leg[]): RawOperation[] {
   const operations: RawOperation[] = []
   const byTime = new Map<string, Leg[]>()
   for (const row of rows) {
@@ -222,10 +235,6 @@ function parseOldSpot(
 
     const trades = group.filter((row) => row.Type === 'trade')
     if (trades.length === 0) continue
-    if (!keep(when)) {
-      skipped.newer += trades.length
-      continue
-    }
 
     const fees = new Map<string, string>()
     for (const row of group.filter((item) => item.Type === 'tradingFee')) {
@@ -336,15 +345,15 @@ function parseDeposits(rows: Leg[], skipped: Skipped): RawOperation[] {
 
 // --- архив ----------------------------------------------------------------
 
-export function parseBybitStatement(archive: Buffer, cutoff?: Date): Statement {
+// Границы по дате здесь больше нет, и это снятое ограничение, а не упрощение.
+// Она защищала от задвоения с сделками, приехавшими по API, но защищала только
+// при правильном порядке загрузки: сначала ключ, потом файлы. Порядок, от
+// которого зависит правильность денег, — это баг, а не инструкция. Теперь
+// задвоение ловит сверка по содержимому в `api`, с учётом кратности: см.
+// `apply-import.service.ts`. Решено 24.10.2026.
+export function parseBybitStatement(archive: Buffer): Statement {
   const files = unzipSync(new Uint8Array(archive))
-  const skipped: Skipped = { derivatives: 0, newer: 0, withdrawals: 0, unknownFiles: [] }
-  // Граница по дате действует **только на сделки**: это они приезжают по API
-  // со своим `execId`, и только их можно задвоить. Депозиты, airdrop'ы, P2P и
-  // переводы API не отдаёт ни в каком окне — отбросив их по дате, мы потеряли
-  // бы единственный источник себестоимости для монет, пришедших не покупкой.
-  // Проверено на живой выгрузке: с границей на всё BTC-депозиты пропадали.
-  const keep = (when: string) => !cutoff || new Date(when) < cutoff
+  const skipped: Skipped = { derivatives: 0, withdrawals: 0, unknownFiles: [] }
 
   const operations: RawOperation[] = []
   for (const [path, bytes] of Object.entries(files)) {
@@ -353,8 +362,8 @@ export function parseBybitStatement(archive: Buffer, cutoff?: Date): Statement {
     // Первая строка — подпись с UID, заголовок на второй.
     const rows = readCsv(new TextDecoder().decode(bytes), 1)
 
-    if (name.startsWith(UTA)) operations.push(...parseUta(rows, skipped, keep))
-    else if (name.startsWith(OLD_SPOT)) operations.push(...parseOldSpot(rows, skipped, keep))
+    if (name.startsWith(UTA)) operations.push(...parseUta(rows, skipped))
+    else if (name.startsWith(OLD_SPOT)) operations.push(...parseOldSpot(rows))
     else if (name.startsWith(FUND)) operations.push(...parseFund(rows))
     else if (name.startsWith(DEPOSITS)) operations.push(...parseDeposits(rows, skipped))
     else if (name.startsWith(CONTRACT)) skipped.derivatives += rows.length
