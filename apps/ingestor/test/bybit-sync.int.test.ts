@@ -7,6 +7,7 @@ import { IMPORT_PARSED_TOPIC } from '@thesis/contracts'
 import { MASTER_KEY_BYTES, seal } from '@thesis/contracts/crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { BybitSyncService } from '../src/connectors/bybit/sync.service.ts'
+import { ImportsService } from '../src/imports/imports.service.ts'
 import { KeyVault } from '../src/keys/vault.ts'
 import { OutboxRepository } from '../src/outbox/outbox.repository.ts'
 import { PermanentFailure } from '../src/rabbit/rabbit.consumer.ts'
@@ -28,6 +29,7 @@ import { withTestDb } from './setup-db.ts'
 let db: Awaited<ReturnType<typeof withTestDb>>
 let prisma: PrismaService
 let sync: BybitSyncService
+let imports: ImportsService
 
 const masterKey = randomBytes(MASTER_KEY_BYTES)
 const keyFile = join(tmpdir(), `thesis-sync-master-${randomUUID()}.key`)
@@ -93,6 +95,7 @@ beforeAll(async () => {
     calls,
     consumer,
   )
+  imports = new ImportsService(prisma, new OutboxRepository(prisma), consumer)
 })
 
 beforeEach(async () => {
@@ -262,4 +265,62 @@ it('лимит биржи уходит в повтор, а не в отказ', 
   await expect(failure).rejects.not.toBeInstanceOf(PermanentFailure)
 
   expect(await published()).toEqual([])
+})
+
+// «Разобрать заново» должно работать для синхронизации так же, как для отчёта:
+// иначе отложенная продажа, дождавшаяся своей покупки, не применится никогда —
+// повторная синхронизация отдаёт тот же хеш и пропускается.
+it('операции остаются сырьём, и повторный разбор их перечитывает', async () => {
+  const accountId = randomUUID()
+  await seedKey(accountId)
+  answerPages([firstPage, secondPage])
+  await sync.run(command(accountId, new Date(Date.now() - 86_400_000).toISOString()))
+  const [first] = await published()
+
+  const raw = await prisma.rawImport.findUniqueOrThrow({
+    where: { importId: first!.importId },
+  })
+  expect(raw.source).toBe('bybit')
+  expect(JSON.parse(Buffer.from(raw.payload).toString('utf8'))).toHaveLength(3)
+
+  // Повторный разбор идёт без байтов в команде и без обращения к бирже.
+  await prisma.outboxEvent.deleteMany()
+  const { urls } = answerPages([emptyPage])
+  await imports.parse({
+    importId: first!.importId,
+    accountId,
+    userId: first!.userId,
+    source: 'bybit',
+    fileHash: raw.fileHash,
+  })
+
+  // К бирже повторный разбор не ходит вовсе: сырьё уже лежит здесь.
+  expect(urls).toHaveLength(0)
+  const [again] = await published()
+  expect(again?.operations.map((operation) => operation.externalId)).toEqual([
+    'exec-1',
+    'exec-2',
+    'exec-3',
+  ])
+  // Хеша в событии повторного разбора нет: строка импорта уже существует, и
+  // создавать её второй раз не надо — иначе консьюмер счёл бы это дублем.
+  expect(again?.fileHash).toBeUndefined()
+  expect(again?.error).toBeUndefined()
+})
+
+// Источник, которого мы не умеем разбирать, по-прежнему отказ навсегда: иначе
+// команда крутилась бы в повторах из-за опечатки в источнике.
+it('незнакомый источник отказывает навсегда', async () => {
+  const accountId = randomUUID()
+
+  await expect(
+    imports.parse({
+      importId: randomUUID(),
+      accountId,
+      userId: randomUUID(),
+      source: 'kraken',
+      fileHash: 'нет',
+      payloadBase64: Buffer.from('[]').toString('base64'),
+    }),
+  ).rejects.toThrow(PermanentFailure)
 })
